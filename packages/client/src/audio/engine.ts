@@ -1,0 +1,280 @@
+import { SAMPLE_RATE } from "@koden/shared";
+
+const WORKLET_URL = new URL("./pcm-worklet.js", import.meta.url);
+
+export type AgcMode = "OFF" | "FAST" | "SLOW";
+
+export interface ReceiveParams {
+  /** 0..10 master volume. */
+  afGain: number;
+  /** 0..10 receiver sensitivity/gain. */
+  rfGain: number;
+  /** 0..10; audio is muted unless the signal exceeds a threshold derived from this. */
+  squelch: number;
+  /** 0..10 noise blanker strength (soft-clips sharp impulse noise). */
+  nbLevel: number;
+  /** 0..10 noise reduction strength (attenuates high-frequency hiss). */
+  nrLevel: number;
+  /** 0..10 manual notch depth; 0 disables the notch filter. */
+  notchDepth: number;
+  /** Hz, center frequency of the manual notch filter. */
+  notchFreqHz: number;
+  /** 0..10 notch width/Q. */
+  notchWidth: number;
+  /** Hz, -1500..1500 IF shift offset. */
+  ifShiftHz: number;
+  /** 0..10 passband tuning (Q of the IF shift filter). */
+  pbtQ: number;
+  /** 0..10 receive bandwidth (10 = full width, 0 = very narrow/muffled). */
+  width: number;
+  agcMode: AgcMode;
+}
+
+const DEFAULT_RECEIVE_PARAMS: ReceiveParams = {
+  afGain: 7,
+  rfGain: 10,
+  squelch: 0,
+  nbLevel: 0,
+  nrLevel: 0,
+  notchDepth: 0,
+  notchFreqHz: 1000,
+  notchWidth: 5,
+  ifShiftHz: 0,
+  pbtQ: 5,
+  width: 10,
+  agcMode: "FAST",
+};
+
+function makeSoftClipCurve(amount: number): Float32Array {
+  // amount 0 = transparent, 1 = aggressively limits peaks (noise-blanker-ish).
+  const n = 1024;
+  const curve = new Float32Array(n);
+  const k = 1 + amount * 40;
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    curve[i] = Math.tanh(k * x) / Math.tanh(k);
+  }
+  return curve;
+}
+
+export class AudioEngine {
+  private context: AudioContext | null = null;
+  private captureNode: AudioWorkletNode | null = null;
+  private playbackNode: AudioWorkletNode | null = null;
+  private micStream: MediaStream | null = null;
+  private onFrame: ((frame: ArrayBuffer) => void) | null = null;
+
+  // Receive chain nodes.
+  private ifShiftFilter: BiquadFilterNode | null = null;
+  private notchFilter: BiquadFilterNode | null = null;
+  private widthFilter: BiquadFilterNode | null = null;
+  private nrFilter: BiquadFilterNode | null = null;
+  private nbShaper: WaveShaperNode | null = null;
+  private agcCompressor: DynamicsCompressorNode | null = null;
+  private rfGainNode: GainNode | null = null;
+  private afGainNode: GainNode | null = null;
+  private squelchGate: GainNode | null = null;
+
+  // Transmit chain nodes.
+  private compCompressor: DynamicsCompressorNode | null = null;
+  private voxAnalyser: AnalyserNode | null = null;
+  private monitorGain: GainNode | null = null;
+
+  private params: ReceiveParams = { ...DEFAULT_RECEIVE_PARAMS };
+
+  async init(): Promise<void> {
+    if (this.context) return;
+    const context = new AudioContext({ sampleRate: SAMPLE_RATE });
+    await context.audioWorklet.addModule(WORKLET_URL);
+    this.context = context;
+
+    this.playbackNode = new AudioWorkletNode(context, "koden-playback-processor", {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+    });
+
+    this.ifShiftFilter = new BiquadFilterNode(context, {
+      type: "peaking",
+      frequency: 1500,
+      Q: 1,
+      gain: 6,
+    });
+    this.notchFilter = new BiquadFilterNode(context, {
+      type: "notch",
+      frequency: 1000,
+      Q: 1,
+    });
+    this.widthFilter = new BiquadFilterNode(context, {
+      type: "lowpass",
+      frequency: 3800,
+      Q: 0.707,
+    });
+    this.nrFilter = new BiquadFilterNode(context, {
+      type: "lowpass",
+      frequency: 3800,
+      Q: 0.707,
+    });
+    this.nbShaper = new WaveShaperNode(context, {
+      curve: makeSoftClipCurve(0),
+      oversample: "2x",
+    });
+    this.agcCompressor = new DynamicsCompressorNode(context, {
+      threshold: 0,
+      ratio: 1,
+      attack: 0.01,
+      release: 0.3,
+      knee: 6,
+    });
+    this.rfGainNode = new GainNode(context, { gain: 1 });
+    this.afGainNode = new GainNode(context, { gain: 0.7 });
+    this.squelchGate = new GainNode(context, { gain: 1 });
+
+    this.playbackNode
+      .connect(this.ifShiftFilter)
+      .connect(this.notchFilter)
+      .connect(this.widthFilter)
+      .connect(this.nrFilter)
+      .connect(this.nbShaper)
+      .connect(this.agcCompressor)
+      .connect(this.rfGainNode)
+      .connect(this.afGainNode)
+      .connect(this.squelchGate)
+      .connect(context.destination);
+
+    this.applyReceiveParams();
+  }
+
+  /** Feed a mixed audio frame received from the server into the playback graph. */
+  playFrame(frame: ArrayBuffer): void {
+    this.playbackNode?.port.postMessage(frame, [frame]);
+  }
+
+  /** Start capturing the mic. `onFrame` is invoked with each encoded 20ms PCM frame regardless of transmit state; the caller decides whether to actually send it. */
+  async startCapture(onFrame: (frame: ArrayBuffer) => void): Promise<void> {
+    if (!this.context) throw new Error("AudioEngine not initialized");
+    const context = this.context;
+    this.onFrame = onFrame;
+    this.micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: false,
+        autoGainControl: true,
+        channelCount: 1,
+      },
+    });
+    const source = context.createMediaStreamSource(this.micStream);
+
+    this.compCompressor = new DynamicsCompressorNode(context, {
+      threshold: -20,
+      ratio: 1,
+      attack: 0.003,
+      release: 0.25,
+      knee: 6,
+    });
+    this.voxAnalyser = new AnalyserNode(context, { fftSize: 512 });
+    this.monitorGain = new GainNode(context, { gain: 0 });
+
+    const captureNode = new AudioWorkletNode(context, "koden-capture-processor", {
+      numberOfInputs: 1,
+      numberOfOutputs: 0,
+      channelCount: 1,
+    });
+    captureNode.port.onmessage = (event) => {
+      this.onFrame?.(event.data as ArrayBuffer);
+    };
+
+    source.connect(this.compCompressor);
+    this.compCompressor.connect(this.voxAnalyser);
+    this.compCompressor.connect(captureNode);
+    this.compCompressor.connect(this.monitorGain);
+    this.monitorGain.connect(context.destination);
+
+    this.captureNode = captureNode;
+    this.setCompLevel(0);
+  }
+
+  stopCapture(): void {
+    this.captureNode?.disconnect();
+    this.captureNode = null;
+    this.compCompressor?.disconnect();
+    this.compCompressor = null;
+    this.voxAnalyser?.disconnect();
+    this.voxAnalyser = null;
+    this.monitorGain?.disconnect();
+    this.monitorGain = null;
+    this.micStream?.getTracks().forEach((t) => t.stop());
+    this.micStream = null;
+    this.onFrame = null;
+  }
+
+  async resume(): Promise<void> {
+    if (this.context?.state === "suspended") await this.context.resume();
+  }
+
+  /** Current mic input RMS level (0..1), used for VOX detection. */
+  getMicLevel(): number {
+    if (!this.voxAnalyser) return 0;
+    const buf = new Float32Array(this.voxAnalyser.fftSize);
+    this.voxAnalyser.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (const v of buf) sum += v * v;
+    return Math.sqrt(sum / buf.length);
+  }
+
+  setCompLevel(level: number): void {
+    if (!this.compCompressor) return;
+    const t = level / 10;
+    this.compCompressor.threshold.value = -20 - t * 25;
+    this.compCompressor.ratio.value = 1 + t * 11;
+  }
+
+  setMonitor(enabled: boolean): void {
+    if (!this.monitorGain) return;
+    this.monitorGain.gain.value = enabled ? 0.6 : 0;
+  }
+
+  updateReceiveParams(partial: Partial<ReceiveParams>): void {
+    this.params = { ...this.params, ...partial };
+    this.applyReceiveParams();
+  }
+
+  private applyReceiveParams(): void {
+    const p = this.params;
+    if (!this.ifShiftFilter || !this.notchFilter || !this.widthFilter || !this.nrFilter ||
+        !this.nbShaper || !this.agcCompressor || !this.rfGainNode || !this.afGainNode || !this.squelchGate) {
+      return;
+    }
+
+    this.ifShiftFilter.frequency.value = Math.max(200, Math.min(2900, 1500 + p.ifShiftHz));
+    this.ifShiftFilter.Q.value = 0.4 + (p.pbtQ / 10) * 8;
+
+    this.notchFilter.frequency.value = p.notchFreqHz;
+    // Depth 0 -> essentially bypassed (very low Q, negligible cut).
+    this.notchFilter.Q.value = 0.01 + (p.notchDepth / 10) * (0.5 + (p.notchWidth / 10) * 15);
+
+    this.widthFilter.frequency.value = 700 + (p.width / 10) * 3300;
+    this.nrFilter.frequency.value = 4000 - (p.nrLevel / 10) * 3000;
+
+    this.nbShaper.curve = makeSoftClipCurve(p.nbLevel / 10) as Float32Array<ArrayBuffer>;
+
+    if (p.agcMode === "OFF") {
+      this.agcCompressor.threshold.value = 0;
+      this.agcCompressor.ratio.value = 1;
+    } else {
+      this.agcCompressor.threshold.value = -30;
+      this.agcCompressor.ratio.value = 8;
+      this.agcCompressor.attack.value = p.agcMode === "FAST" ? 0.003 : 0.01;
+      this.agcCompressor.release.value = p.agcMode === "FAST" ? 0.15 : 1.2;
+    }
+
+    this.rfGainNode.gain.value = Math.max(0, p.rfGain / 10) * 1.2;
+    this.afGainNode.gain.value = Math.max(0, p.afGain / 10) * 1.5;
+  }
+
+  setSquelchOpen(open: boolean): void {
+    if (!this.squelchGate || !this.context) return;
+    const target = open ? 1 : 0;
+    this.squelchGate.gain.setTargetAtTime(target, this.context.currentTime, 0.01);
+  }
+}
