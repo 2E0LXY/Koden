@@ -202,6 +202,7 @@ export class BandNoiseGenerator {
   private crackle: AtmosphericCrackle;
   private birdies: Birdie[];
   private shaper: Biquad | null = null;
+  private shaperMakeupGain = 1;
   private baseCracklesPerSecond: number;
 
   constructor(
@@ -218,19 +219,24 @@ export class BandNoiseGenerator {
 
     // A couple of faint fixed birdies scattered across the band, as if from
     // internal oscillator harmonics -- cosmetic realism, not tied to any tx.
+    // Kept small relative to the pink noise's own pre-gain amplitude (~0.1)
+    // so they read as faint accents, not a dominant tone.
     this.birdies = [
-      new Birdie(sampleRate * 0.11, sampleRate, 0.01),
-      new Birdie(sampleRate * 0.27, sampleRate, 0.006),
+      new Birdie(sampleRate * 0.11, sampleRate, 0.02),
+      new Birdie(sampleRate * 0.27, sampleRate, 0.01),
     ];
 
-    // CW is heard through a very narrow filter centered on the sidetone
-    // pitch, so its noise is a thin, "whistly" band of hiss rather than
-    // broadband static. AM's wider, symmetric double-sideband detector
-    // tends to sound a little duller/warmer than a sharp SSB filter.
+    // CW is heard through a narrow filter centered on the sidetone pitch,
+    // so its noise is thinner than broadband SSB hiss -- but the Q has to
+    // stay low enough that it still sounds like textured (if narrow) hiss
+    // rather than a pure ringing tone. AM's wider, symmetric double-sideband
+    // detector tends to sound a little duller/warmer than a sharp SSB filter.
     if (mode === "CW" || mode === "RTTY") {
-      this.shaper = Biquad.bandpass(sampleRate, 700, 2.2);
+      this.shaper = Biquad.bandpass(sampleRate, 700, 0.9);
+      this.shaperMakeupGain = 2.6; // narrow bandpass throws away most of the energy
     } else if (mode === "AM") {
       this.shaper = Biquad.lowpass(sampleRate, 3200, 0.7);
+      this.shaperMakeupGain = 1.3;
     }
   }
 
@@ -247,14 +253,20 @@ export class BandNoiseGenerator {
   generate(nSamples: number, noiseFloorDb: number, crackleRateMultiplier = 1): Float32Array {
     const out = new Float32Array(nSamples);
     this.pink.fill(out);
-    if (this.shaper) this.shaper.processInPlace(out);
-
-    const gain = dbToLinear(noiseFloorDb);
-    for (let i = 0; i < out.length; i++) out[i] *= gain;
 
     this.crackle.setRate(this.baseCracklesPerSecond * crackleRateMultiplier);
     this.crackle.fillAdd(out);
     for (const b of this.birdies) b.fillAdd(out);
+
+    // The mode filter shapes *everything* reaching the ear (atmospheric
+    // noise, crackle, birdies alike), not just the raw pink noise -- and the
+    // final noiseFloorDb-derived gain has to apply after that, to the whole
+    // combined signal, so accents stay proportional to the ambient floor
+    // instead of sitting at a fixed loudness regardless of band/mode.
+    if (this.shaper) this.shaper.processInPlace(out);
+
+    const gain = dbToLinear(noiseFloorDb) * this.shaperMakeupGain;
+    for (let i = 0; i < out.length; i++) out[i] *= gain;
     return out;
   }
 }

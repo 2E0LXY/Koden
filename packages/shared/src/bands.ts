@@ -27,7 +27,7 @@ export const BANDS: Band[] = [
     daytimeAbsorption: 0.95,
     nighttimeDx: 0.8,
     meteorScatterProne: false,
-    baseNoiseFloorDb: -60,
+    baseNoiseFloorDb: -25,
   },
   {
     id: "80m",
@@ -38,7 +38,7 @@ export const BANDS: Band[] = [
     daytimeAbsorption: 0.85,
     nighttimeDx: 0.85,
     meteorScatterProne: false,
-    baseNoiseFloorDb: -65,
+    baseNoiseFloorDb: -30,
   },
   {
     id: "40m",
@@ -49,7 +49,7 @@ export const BANDS: Band[] = [
     daytimeAbsorption: 0.6,
     nighttimeDx: 0.9,
     meteorScatterProne: false,
-    baseNoiseFloorDb: -70,
+    baseNoiseFloorDb: -35,
   },
   {
     id: "30m",
@@ -60,7 +60,7 @@ export const BANDS: Band[] = [
     daytimeAbsorption: 0.4,
     nighttimeDx: 0.88,
     meteorScatterProne: false,
-    baseNoiseFloorDb: -72,
+    baseNoiseFloorDb: -37,
   },
   {
     id: "20m",
@@ -71,7 +71,7 @@ export const BANDS: Band[] = [
     daytimeAbsorption: 0.25,
     nighttimeDx: 0.5,
     meteorScatterProne: false,
-    baseNoiseFloorDb: -75,
+    baseNoiseFloorDb: -40,
   },
   {
     id: "17m",
@@ -82,7 +82,7 @@ export const BANDS: Band[] = [
     daytimeAbsorption: 0.2,
     nighttimeDx: 0.35,
     meteorScatterProne: false,
-    baseNoiseFloorDb: -78,
+    baseNoiseFloorDb: -43,
   },
   {
     id: "15m",
@@ -93,7 +93,7 @@ export const BANDS: Band[] = [
     daytimeAbsorption: 0.15,
     nighttimeDx: 0.2,
     meteorScatterProne: false,
-    baseNoiseFloorDb: -80,
+    baseNoiseFloorDb: -45,
   },
   {
     id: "12m",
@@ -104,7 +104,7 @@ export const BANDS: Band[] = [
     daytimeAbsorption: 0.1,
     nighttimeDx: 0.1,
     meteorScatterProne: true,
-    baseNoiseFloorDb: -82,
+    baseNoiseFloorDb: -47,
   },
   {
     id: "10m",
@@ -115,7 +115,7 @@ export const BANDS: Band[] = [
     daytimeAbsorption: 0.05,
     nighttimeDx: 0.05,
     meteorScatterProne: true,
-    baseNoiseFloorDb: -85,
+    baseNoiseFloorDb: -50,
   },
   {
     id: "6m",
@@ -126,7 +126,7 @@ export const BANDS: Band[] = [
     daytimeAbsorption: 0.02,
     nighttimeDx: 0.02,
     meteorScatterProne: true,
-    baseNoiseFloorDb: -90,
+    baseNoiseFloorDb: -55,
   },
 ];
 
