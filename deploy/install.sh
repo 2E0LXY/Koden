@@ -94,8 +94,29 @@ else
   git clone --branch "$REPO_REF" --depth 1 "$REPO_URL" "$INSTALL_DIR"
 fi
 
+ensure_build_swap() {
+  local mem_kb swap_kb
+  mem_kb="$(awk '/MemTotal:/ {print $2}' /proc/meminfo)"
+  swap_kb="$(awk '/SwapTotal:/ {print $2}' /proc/meminfo)"
+  # tsc/vite can use well over 1GB during the build; on a small VPS with
+  # little or no swap, the kernel OOM-killer takes the build out instead
+  # (exit code 137). Give it enough swap headroom to finish.
+  if (( mem_kb + swap_kb >= 2 * 1024 * 1024 )); then
+    return
+  fi
+  log "Low memory (~$((mem_kb / 1024))MB RAM, ~$((swap_kb / 1024))MB swap) -- adding a 2G swap file so the build doesn't get OOM-killed"
+  if [[ ! -f /swapfile ]]; then
+    fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+    chmod 600 /swapfile
+    mkswap /swapfile >/dev/null
+  fi
+  swapon /swapfile 2>/dev/null || true
+  grep -q '^/swapfile ' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+}
+
 log "Installing dependencies and building"
 cd "$INSTALL_DIR"
+ensure_build_swap
 npm install
 npm run build --workspace=packages/shared
 npm run build --workspace=packages/server
