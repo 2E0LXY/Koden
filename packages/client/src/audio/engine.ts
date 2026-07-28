@@ -28,6 +28,16 @@ export interface ReceiveParams {
   /** 0..10 receive bandwidth (10 = full width, 0 = very narrow/muffled). */
   width: number;
   agcMode: AgcMode;
+  /** Front-end attenuator: cuts gain to handle very strong signals. */
+  attEnabled: boolean;
+  /** Intercept-point-optimized mode: preamp bypassed (less gain, better strong-signal handling). */
+  ipoEnabled: boolean;
+  /** Audio peak filter: narrow CW-tone peaking filter around 700Hz. */
+  apfEnabled: boolean;
+  /** Extra "digital" noise reduction pass, stacked on top of nrLevel. */
+  dnrEnabled: boolean;
+  /** 0..10 balance trim applied to both AF and RF gain together. */
+  afRfBalance: number;
 }
 
 const DEFAULT_RECEIVE_PARAMS: ReceiveParams = {
@@ -43,6 +53,11 @@ const DEFAULT_RECEIVE_PARAMS: ReceiveParams = {
   pbtQ: 5,
   width: 10,
   agcMode: "FAST",
+  attEnabled: false,
+  ipoEnabled: false,
+  apfEnabled: false,
+  dnrEnabled: false,
+  afRfBalance: 5,
 };
 
 function makeSoftClipCurve(amount: number): Float32Array {
@@ -67,6 +82,7 @@ export class AudioEngine {
   // Receive chain nodes.
   private ifShiftFilter: BiquadFilterNode | null = null;
   private notchFilter: BiquadFilterNode | null = null;
+  private apfFilter: BiquadFilterNode | null = null;
   private widthFilter: BiquadFilterNode | null = null;
   private nrFilter: BiquadFilterNode | null = null;
   private nbShaper: WaveShaperNode | null = null;
@@ -76,9 +92,13 @@ export class AudioEngine {
   private squelchGate: GainNode | null = null;
 
   // Transmit chain nodes.
+  private micGainNode: GainNode | null = null;
   private compCompressor: DynamicsCompressorNode | null = null;
+  private txGainNode: GainNode | null = null;
   private voxAnalyser: AnalyserNode | null = null;
   private monitorGain: GainNode | null = null;
+  private moniLevel = 0;
+  private moniEnabled = false;
 
   private params: ReceiveParams = { ...DEFAULT_RECEIVE_PARAMS };
 
@@ -104,6 +124,12 @@ export class AudioEngine {
       type: "notch",
       frequency: 1000,
       Q: 1,
+    });
+    this.apfFilter = new BiquadFilterNode(context, {
+      type: "peaking",
+      frequency: 700,
+      Q: 8,
+      gain: 0,
     });
     this.widthFilter = new BiquadFilterNode(context, {
       type: "lowpass",
@@ -133,6 +159,7 @@ export class AudioEngine {
     this.playbackNode
       .connect(this.ifShiftFilter)
       .connect(this.notchFilter)
+      .connect(this.apfFilter)
       .connect(this.widthFilter)
       .connect(this.nrFilter)
       .connect(this.nbShaper)
@@ -165,6 +192,7 @@ export class AudioEngine {
     });
     const source = context.createMediaStreamSource(this.micStream);
 
+    this.micGainNode = new GainNode(context, { gain: 1 });
     this.compCompressor = new DynamicsCompressorNode(context, {
       threshold: -20,
       ratio: 1,
@@ -172,6 +200,7 @@ export class AudioEngine {
       release: 0.25,
       knee: 6,
     });
+    this.txGainNode = new GainNode(context, { gain: 1 });
     this.voxAnalyser = new AnalyserNode(context, { fftSize: 512 });
     this.monitorGain = new GainNode(context, { gain: 0 });
 
@@ -184,21 +213,30 @@ export class AudioEngine {
       this.onFrame?.(event.data as ArrayBuffer);
     };
 
-    source.connect(this.compCompressor);
-    this.compCompressor.connect(this.voxAnalyser);
-    this.compCompressor.connect(captureNode);
-    this.compCompressor.connect(this.monitorGain);
+    source
+      .connect(this.micGainNode)
+      .connect(this.compCompressor)
+      .connect(this.txGainNode);
+    this.txGainNode.connect(this.voxAnalyser);
+    this.txGainNode.connect(captureNode);
+    this.txGainNode.connect(this.monitorGain);
     this.monitorGain.connect(context.destination);
 
     this.captureNode = captureNode;
     this.setCompLevel(0);
+    this.setMicGain(5);
+    this.setTxPower(10);
   }
 
   stopCapture(): void {
     this.captureNode?.disconnect();
     this.captureNode = null;
+    this.micGainNode?.disconnect();
+    this.micGainNode = null;
     this.compCompressor?.disconnect();
     this.compCompressor = null;
+    this.txGainNode?.disconnect();
+    this.txGainNode = null;
     this.voxAnalyser?.disconnect();
     this.voxAnalyser = null;
     this.monitorGain?.disconnect();
@@ -229,9 +267,22 @@ export class AudioEngine {
     this.compCompressor.ratio.value = 1 + t * 11;
   }
 
-  setMonitor(enabled: boolean): void {
+  setMicGain(level: number): void {
+    if (!this.micGainNode) return;
+    this.micGainNode.gain.value = 0.2 + (level / 10) * 2.8;
+  }
+
+  setTxPower(level: number): void {
+    if (!this.txGainNode) return;
+    this.txGainNode.gain.value = 0.4 + (level / 10) * 0.9;
+  }
+
+  /** 0..10 monitor/sidetone volume; call whenever the level or the enabled toggle changes. */
+  setMonitor(level: number, enabled: boolean): void {
+    this.moniLevel = level;
+    this.moniEnabled = enabled;
     if (!this.monitorGain) return;
-    this.monitorGain.gain.value = enabled ? 0.6 : 0;
+    this.monitorGain.gain.value = enabled ? (level / 10) * 0.8 : 0;
   }
 
   updateReceiveParams(partial: Partial<ReceiveParams>): void {
@@ -241,7 +292,7 @@ export class AudioEngine {
 
   private applyReceiveParams(): void {
     const p = this.params;
-    if (!this.ifShiftFilter || !this.notchFilter || !this.widthFilter || !this.nrFilter ||
+    if (!this.ifShiftFilter || !this.notchFilter || !this.apfFilter || !this.widthFilter || !this.nrFilter ||
         !this.nbShaper || !this.agcCompressor || !this.rfGainNode || !this.afGainNode || !this.squelchGate) {
       return;
     }
@@ -253,10 +304,15 @@ export class AudioEngine {
     // Depth 0 -> essentially bypassed (very low Q, negligible cut).
     this.notchFilter.Q.value = 0.01 + (p.notchDepth / 10) * (0.5 + (p.notchWidth / 10) * 15);
 
-    this.widthFilter.frequency.value = 700 + (p.width / 10) * 3300;
-    this.nrFilter.frequency.value = 4000 - (p.nrLevel / 10) * 3000;
+    // Peaking filter's gain is the bypass switch: 0dB = transparent.
+    this.apfFilter.gain.value = p.apfEnabled ? 14 : 0;
 
-    this.nbShaper.curve = makeSoftClipCurve(p.nbLevel / 10) as Float32Array<ArrayBuffer>;
+    this.widthFilter.frequency.value = 700 + (p.width / 10) * 3300;
+    const dnrPull = p.dnrEnabled ? 900 : 0;
+    this.nrFilter.frequency.value = Math.max(500, 4000 - (p.nrLevel / 10) * 3000 - dnrPull);
+
+    const nbAmount = p.nbLevel / 10 + (p.dnrEnabled ? 0.1 : 0);
+    this.nbShaper.curve = makeSoftClipCurve(Math.min(1, nbAmount)) as Float32Array<ArrayBuffer>;
 
     if (p.agcMode === "OFF") {
       this.agcCompressor.threshold.value = 0;
@@ -268,8 +324,11 @@ export class AudioEngine {
       this.agcCompressor.release.value = p.agcMode === "FAST" ? 0.15 : 1.2;
     }
 
-    this.rfGainNode.gain.value = Math.max(0, p.rfGain / 10) * 1.2;
-    this.afGainNode.gain.value = Math.max(0, p.afGain / 10) * 1.5;
+    const balance = 0.5 + p.afRfBalance / 10;
+    const attMul = p.attEnabled ? 0.35 : 1;
+    const ipoMul = p.ipoEnabled ? 0.8 : 1.25;
+    this.rfGainNode.gain.value = Math.max(0, p.rfGain / 10) * 1.2 * attMul * ipoMul * balance;
+    this.afGainNode.gain.value = Math.max(0, p.afGain / 10) * 1.5 * balance;
   }
 
   setSquelchOpen(open: boolean): void {

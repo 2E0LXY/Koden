@@ -9,11 +9,13 @@ interface KnobProps {
   onChange: (value: number) => void;
   format?: (value: number) => string;
   size?: "normal" | "small";
+  /** Double-click/tap to reset, e.g. a push-to-clear encoder like "TWIN PBT (CLR)". */
+  onReset?: () => void;
 }
 
 const SWEEP_DEG = 270;
 
-export function Knob({ label, value, min, max, onChange, format, size = "normal" }: KnobProps) {
+export function Knob({ label, value, min, max, onChange, format, size = "normal", onReset }: KnobProps) {
   const [dragging, setDragging] = useState(false);
   const dragStart = useRef<{ y: number; value: number } | null>(null);
   const lastDetentStep = useRef(0);
@@ -61,6 +63,8 @@ export function Knob({ label, value, min, max, onChange, format, size = "normal"
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onWheel={onWheel}
+        onDoubleClick={onReset}
+        title={onReset ? "Double-click to reset" : undefined}
       >
         <div className="knob__indicator" style={{ transform: `rotate(${angle}deg)` }} />
       </div>

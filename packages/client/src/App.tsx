@@ -8,14 +8,13 @@ import {
 } from "@koden/shared";
 import { KodenSocket, type ConnectionStatus } from "./net/wsClient.js";
 import { AudioEngine, type AgcMode, type ReceiveParams } from "./audio/engine.js";
-import { beep, power, relay, squelchTail } from "./audio/sfx.js";
+import { beep, detent, power, relay, squelchTail } from "./audio/sfx.js";
 import { JoinForm } from "./ui/JoinForm.js";
 import { RadioPanel } from "./ui/RadioPanel.js";
 
 const WS_URL = import.meta.env.VITE_SERVER_WS_URL ?? "ws://localhost:8787/ws";
 const MAX_EVENTS = 12;
 const VOX_THRESHOLD = 0.02;
-const VOX_HANG_MS = 700;
 
 interface VfoState {
   freqKHz: number;
@@ -23,6 +22,14 @@ interface VfoState {
 }
 
 type MemorySlot = VfoState | null;
+export type TuneStep = "FINE" | "NORMAL" | "COARSE" | "FAST";
+
+const STEP_KHZ: Record<TuneStep, number> = {
+  FINE: 0.01,
+  NORMAL: 0.1,
+  COARSE: 1,
+  FAST: 10,
+};
 
 const DEFAULT_RX: ReceiveParams = {
   afGain: 7,
@@ -37,6 +44,11 @@ const DEFAULT_RX: ReceiveParams = {
   pbtQ: 5,
   width: 10,
   agcMode: "FAST",
+  attEnabled: false,
+  ipoEnabled: false,
+  apfEnabled: false,
+  dnrEnabled: false,
+  afRfBalance: 5,
 };
 
 export function App() {
@@ -49,35 +61,41 @@ export function App() {
   const [vfoB, setVfoB] = useState<VfoState>({ freqKHz: 14200.0, mode: "USB" });
   const [activeVfo, setActiveVfo] = useState<"A" | "B">("A");
   const [split, setSplit] = useState(false);
+  const [vfoLocked, setVfoLocked] = useState(false);
+  const [tuneStep, setTuneStep] = useState<TuneStep>("NORMAL");
 
   const [ritEnabled, setRitEnabled] = useState(false);
-  const [ritHz, setRitHz] = useState(0);
+  const [xitEnabled, setXitEnabled] = useState(false);
+  const [offsetHz, setOffsetHz] = useState(0);
 
   const [filterWidth, setFilterWidth] = useState<FilterWidth>("normal");
 
   const [memory, setMemory] = useState<MemorySlot[]>(() => Array(10).fill(null));
-  const [vfoMMode, setVfoMMode] = useState<"VFO" | "M">("VFO");
-  const [pendingMemSlot, setPendingMemSlot] = useState<number | null>(null);
-  const [memScanOnly, setMemScanOnly] = useState(false);
   const [memIndex, setMemIndex] = useState(0);
+  const [vfoMMode, setVfoMMode] = useState<"VFO" | "M">("VFO");
+  const [memScanActive, setMemScanActive] = useState(false);
 
   const [mox, setMox] = useState(false);
   const [vox, setVox] = useState(false);
   const [voxActive, setVoxActive] = useState(false);
+  const [voxDelayKnob, setVoxDelayKnob] = useState(4); // -> ~800ms
 
   const [rx, setRx] = useState<ReceiveParams>(DEFAULT_RX);
-  const [compLevel, setCompLevel] = useState(0);
-  const [moni, setMoni] = useState(false);
-  const [bkIn, setBkIn] = useState(false);
+  const [compEnabled, setCompEnabled] = useState(false);
+  const [procLevel, setProcLevel] = useState(4);
+  const [moniEnabled, setMoniEnabled] = useState(false);
+  const [moniLevel, setMoniLevel] = useState(5);
+  const [micGain, setMicGain] = useState(5);
+  const [txPower, setTxPower] = useState(10);
+  const [keySpeed, setKeySpeed] = useState(5);
 
   const [dim, setDim] = useState(false);
   const [mScope, setMScope] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
-  const [compact, setCompact] = useState(false);
+  const [tunerActive, setTunerActive] = useState(false);
+  const [ant, setAnt] = useState<"ANT1" | "ANT2">("ANT1");
 
   const [scanning, setScanning] = useState(false);
-  const [scanDir, setScanDir] = useState<1 | -1>(1);
 
   const [roster, setRoster] = useState<StationInfo[]>([]);
   const [meter, setMeter] = useState({ sMeterDb: -95, noiseFloorDb: -70, audibleStationIds: [] as string[] });
@@ -98,8 +116,9 @@ export function App() {
     [activeVfo],
   );
   const band = findBand(activeVfoState.freqKHz);
-  const listenFreqKHz = activeVfoState.freqKHz + (ritEnabled ? ritHz / 1000 : 0);
-  const txFreqKHz = split ? (activeVfo === "A" ? vfoB.freqKHz : vfoA.freqKHz) : activeVfoState.freqKHz;
+  const listenFreqKHz = activeVfoState.freqKHz + (ritEnabled ? offsetHz / 1000 : 0);
+  const txFreqBase = split ? (activeVfo === "A" ? vfoB.freqKHz : vfoA.freqKHz) : activeVfoState.freqKHz;
+  const txFreqKHz = txFreqBase + (xitEnabled ? offsetHz / 1000 : 0);
 
   const logEvent = useCallback((message: string) => {
     setEvents((prev) => [message, ...prev].slice(0, MAX_EVENTS));
@@ -162,7 +181,7 @@ export function App() {
     setJoined(true);
   }, [logEvent]);
 
-  // Push VFO/mode/RIT/split/filter changes to the server whenever they change.
+  // Push VFO/mode/RIT/XIT/split/filter changes to the server whenever they change.
   useEffect(() => {
     if (!joined) return;
     socketRef.current?.send({
@@ -174,22 +193,30 @@ export function App() {
     });
   }, [joined, listenFreqKHz, activeVfoState.mode, txFreqKHz, filterWidth]);
 
-  // Keep the audio engine's DSP graph in sync with the rx knob state.
   useEffect(() => {
     audioEngineRef.current?.updateReceiveParams(rx);
   }, [rx]);
 
   useEffect(() => {
-    audioEngineRef.current?.setCompLevel(compLevel);
-  }, [compLevel]);
+    audioEngineRef.current?.setCompLevel(compEnabled ? procLevel : 0);
+  }, [compEnabled, procLevel]);
 
   useEffect(() => {
-    audioEngineRef.current?.setMonitor(moni && transmitting);
-  }, [moni, transmitting]);
+    audioEngineRef.current?.setMonitor(moniLevel, moniEnabled && transmitting);
+  }, [moniLevel, moniEnabled, transmitting]);
+
+  useEffect(() => {
+    audioEngineRef.current?.setMicGain(micGain);
+  }, [micGain]);
+
+  useEffect(() => {
+    audioEngineRef.current?.setTxPower(txPower);
+  }, [txPower]);
 
   // Squelch gating: mute/unmute based on current signal vs threshold, with the
   // characteristic "tail" thump when it opens or closes.
   useEffect(() => {
+    if (tunerActive) return;
     const thresholdDb = meter.noiseFloorDb + rx.squelch * 4;
     const open = rx.squelch === 0 || meter.sMeterDb >= thresholdDb;
     audioEngineRef.current?.setSquelchOpen(open);
@@ -197,7 +224,7 @@ export function App() {
       squelchOpenRef.current = open;
       if (audioEngineRef.current) squelchTail();
     }
-  }, [meter.sMeterDb, meter.noiseFloorDb, rx.squelch]);
+  }, [meter.sMeterDb, meter.noiseFloorDb, rx.squelch, tunerActive]);
 
   // Push transmit state to the server whenever MOX or VOX-triggered state changes.
   const prevTransmittingRef = useRef(false);
@@ -210,12 +237,13 @@ export function App() {
     }
   }, [transmitting]);
 
-  // VOX: poll mic level and auto-key transmit with a short hang time.
+  // VOX: poll mic level and auto-key transmit with a configurable hang time.
   useEffect(() => {
     if (!vox) {
       setVoxActive(false);
       return;
     }
+    const hangMs = 100 + (voxDelayKnob / 10) * 1900;
     let hangTimeout: number | undefined;
     const interval = window.setInterval(() => {
       const level = audioEngineRef.current?.getMicLevel() ?? 0;
@@ -226,51 +254,105 @@ export function App() {
           hangTimeout = undefined;
         }
       } else if (!hangTimeout) {
-        hangTimeout = window.setTimeout(() => setVoxActive(false), VOX_HANG_MS);
+        hangTimeout = window.setTimeout(() => setVoxActive(false), hangMs);
       }
     }, 50);
     return () => {
       window.clearInterval(interval);
       if (hangTimeout) window.clearTimeout(hangTimeout);
     };
-  }, [vox]);
+  }, [vox, voxDelayKnob]);
 
-  // Band scan: sweep across the current band, or step through memory channels.
+  // Band scan: sweep upward across the current band.
   useEffect(() => {
-    if (!scanning) return;
-    const id = window.setInterval(
-      () => {
-        if (memScanOnly) {
-          const filled = memory
-            .map((m, idx) => ({ m, idx }))
-            .filter((entry): entry is { m: VfoState; idx: number } => entry.m !== null);
-          if (filled.length === 0) return;
+    if (!scanning || vfoLocked) return;
+    const id = window.setInterval(() => {
+      setActiveVfoState((prev) => {
+        const b = findBand(prev.freqKHz);
+        if (!b) return prev;
+        let next = prev.freqKHz + 0.5;
+        if (next > b.rangeKHz[1]) next = b.rangeKHz[0];
+        return { ...prev, freqKHz: next };
+      });
+    }, 150);
+    return () => window.clearInterval(id);
+  }, [scanning, vfoLocked, setActiveVfoState]);
+
+  // Memory scan (MW): cycle through populated memory channels.
+  useEffect(() => {
+    if (!memScanActive) return;
+    const id = window.setInterval(() => {
+      setMemory((currentMemory) => {
+        const filled = currentMemory
+          .map((m, idx) => ({ m, idx }))
+          .filter((entry): entry is { m: VfoState; idx: number } => entry.m !== null);
+        if (filled.length > 0) {
           setMemIndex((i) => {
-            const next = (i + 1) % filled.length;
-            setActiveVfoState(filled[next].m);
-            return next;
-          });
-        } else {
-          setActiveVfoState((prev) => {
-            const b = findBand(prev.freqKHz);
-            if (!b) return prev;
-            let next = prev.freqKHz + scanDir * 0.5;
-            if (next > b.rangeKHz[1]) next = b.rangeKHz[0];
-            if (next < b.rangeKHz[0]) next = b.rangeKHz[1];
-            return { ...prev, freqKHz: next };
+            const pos = filled.findIndex((f) => f.idx === i);
+            const next = filled[(pos + 1) % filled.length];
+            setActiveVfoState(next.m);
+            return next.idx;
           });
         }
-      },
-      memScanOnly ? 900 : 150,
-    );
+        return currentMemory;
+      });
+    }, 900);
     return () => window.clearInterval(id);
-  }, [scanning, scanDir, memScanOnly, memory, setActiveVfoState]);
+  }, [memScanActive, setActiveVfoState]);
+
+  const cycleMemory = useCallback(
+    (dir: 1 | -1) => {
+      const filled = memory
+        .map((m, idx) => ({ m, idx }))
+        .filter((entry): entry is { m: VfoState; idx: number } => entry.m !== null);
+      if (filled.length === 0) {
+        beep(220, 150);
+        return;
+      }
+      const pos = filled.findIndex((f) => f.idx === memIndex);
+      const nextPos = ((pos < 0 ? 0 : pos) + dir + filled.length) % filled.length;
+      const next = filled[nextPos];
+      setMemIndex(next.idx);
+      setActiveVfoState(next.m);
+      beep(660, 80);
+    },
+    [memory, memIndex, setActiveVfoState],
+  );
+
+  const onMemIn = useCallback(() => {
+    setMemory((prev) => {
+      const next = [...prev];
+      next[memIndex] = activeVfoState;
+      return next;
+    });
+    beep(1500, 100);
+  }, [memIndex, activeVfoState]);
 
   const onTuneKnob = useCallback(
     (freqKHz: number) => {
+      if (vfoLocked) return;
       setActiveVfoState((prev) => ({ ...prev, freqKHz }));
     },
-    [setActiveVfoState],
+    [vfoLocked, setActiveVfoState],
+  );
+
+  const stepFreq = useCallback(
+    (dir: 1 | -1) => {
+      if (vfoLocked) return;
+      if (vfoMMode === "M") {
+        cycleMemory(dir);
+        return;
+      }
+      const stepKHz = STEP_KHZ[tuneStep];
+      setActiveVfoState((prev) => {
+        const b = findBand(prev.freqKHz);
+        const next = prev.freqKHz + dir * stepKHz;
+        if (!b) return { ...prev, freqKHz: next };
+        return { ...prev, freqKHz: Math.max(b.rangeKHz[0], Math.min(b.rangeKHz[1], next)) };
+      });
+      detent();
+    },
+    [vfoLocked, vfoMMode, tuneStep, cycleMemory, setActiveVfoState],
   );
 
   const onModeSelect = useCallback(
@@ -305,48 +387,21 @@ export function App() {
     });
   }, []);
 
-  const onDigit = useCallback(
-    (n: number) => {
-      if (vfoMMode === "M") {
-        const slot = memory[n];
-        if (slot) {
-          setActiveVfoState(slot);
-          beep(660, 80);
-        } else {
-          beep(220, 150);
-        }
-      } else {
-        setPendingMemSlot(n);
-        beep(1200, 50);
-      }
-    },
-    [vfoMMode, memory, setActiveVfoState],
-  );
-
-  const onEnt = useCallback(() => {
-    if (vfoMMode === "VFO" && pendingMemSlot !== null) {
-      setMemory((prev) => {
-        const next = [...prev];
-        next[pendingMemSlot] = activeVfoState;
-        return next;
-      });
-      setPendingMemSlot(null);
-      beep(1500, 100);
-    }
-  }, [vfoMMode, pendingMemSlot, activeVfoState]);
-
-  const onDeltaTx = useCallback(() => {
-    if (activeVfo === "A") setVfoB((prev) => ({ ...prev, freqKHz: vfoA.freqKHz }));
-    else setVfoA((prev) => ({ ...prev, freqKHz: vfoB.freqKHz }));
-    setSplit(true);
-    beep(1000, 60);
-  }, [activeVfo, vfoA.freqKHz, vfoB.freqKHz]);
-
-  const onDeltaRx = useCallback(() => {
-    if (activeVfo === "A") setVfoA((prev) => ({ ...prev, freqKHz: vfoB.freqKHz }));
-    else setVfoB((prev) => ({ ...prev, freqKHz: vfoA.freqKHz }));
-    beep(1000, 60);
-  }, [activeVfo, vfoA.freqKHz, vfoB.freqKHz]);
+  const onTuner = useCallback(() => {
+    if (tunerActive) return;
+    setTunerActive(true);
+    logEvent("ATU: searching for match...");
+    relay(true);
+    audioEngineRef.current?.setSquelchOpen(false);
+    const t1 = window.setTimeout(() => detent(), 200);
+    const t2 = window.setTimeout(() => detent(), 400);
+    const t3 = window.setTimeout(() => relay(false), 900);
+    const t4 = window.setTimeout(() => {
+      setTunerActive(false);
+      logEvent(`ATU: match found, SWR 1.1:1 on ${band?.name ?? "current band"}`);
+    }, 1200);
+    return () => [t1, t2, t3, t4].forEach(window.clearTimeout);
+  }, [tunerActive, band, logEvent]);
 
   const updateRx = useCallback((partial: Partial<ReceiveParams>) => {
     setRx((prev) => ({ ...prev, ...partial }));
@@ -375,16 +430,32 @@ export function App() {
       connectionStatus={connectionStatus}
       onPowerOff={handlePowerOff}
       dim={dim}
+      onToggleDim={() => setDim((s) => !s)}
       mScope={mScope}
+      onToggleMScope={() => setMScope((s) => !s)}
       menuOpen={menuOpen}
-      helpOpen={helpOpen}
-      compact={compact}
+      onToggleMenu={() => setMenuOpen((s) => !s)}
+      onCloseMenu={() => setMenuOpen(false)}
+      tunerActive={tunerActive}
+      onTuner={onTuner}
+      ant={ant}
+      onToggleAnt={() => {
+        setAnt((a) => (a === "ANT1" ? "ANT2" : "ANT1"));
+        relay(true);
+      }}
+      moniEnabled={moniEnabled}
+      onToggleMoni={() => setMoniEnabled((s) => !s)}
       vfoA={vfoA}
       vfoB={vfoB}
       activeVfo={activeVfo}
       onSelectVfo={(v) => {
         setActiveVfo(v);
         beep(500, 50);
+      }}
+      onSwapVfos={() => {
+        setVfoA(vfoB);
+        setVfoB(vfoA);
+        beep(600, 80);
       }}
       split={split}
       onToggleSplit={() => {
@@ -395,26 +466,34 @@ export function App() {
       onTuneKnob={onTuneKnob}
       onModeSelect={onModeSelect}
       onBandSelect={onBandSelect}
+      vfoLocked={vfoLocked}
+      onToggleLock={() => setVfoLocked((s) => !s)}
+      tuneStep={tuneStep}
+      onSetTuneStep={(s) => setTuneStep((prev) => (prev === s ? "NORMAL" : s))}
+      onStepUp={() => stepFreq(1)}
+      onStepDown={() => stepFreq(-1)}
       ritEnabled={ritEnabled}
       onToggleRit={() => setRitEnabled((s) => !s)}
-      ritHz={ritHz}
-      onChangeRitHz={setRitHz}
-      onClearRit={() => {
-        setRitHz(0);
+      xitEnabled={xitEnabled}
+      onToggleXit={() => setXitEnabled((s) => !s)}
+      offsetHz={offsetHz}
+      onChangeOffsetHz={setOffsetHz}
+      onClear={() => {
+        setOffsetHz(0);
         beep(400, 60);
       }}
-      onDeltaTx={onDeltaTx}
-      onDeltaRx={onDeltaRx}
       filterWidth={filterWidth}
-      onSelectFilterWidth={(w) => {
-        setFilterWidth(w);
+      onCycleFilterWidth={() => {
+        setFilterWidth((w) => (w === "narrow" ? "normal" : w === "normal" ? "wide" : "narrow"));
         beep(800, 50);
       }}
       vfoMMode={vfoMMode}
       onToggleVfoM={() => setVfoMMode((m) => (m === "VFO" ? "M" : "VFO"))}
-      pendingMemSlot={pendingMemSlot}
-      onDigit={onDigit}
-      onEnt={onEnt}
+      memIndex={memIndex}
+      onMemToVfo={() => cycleMemory(1)}
+      onMemIn={onMemIn}
+      memScanActive={memScanActive}
+      onToggleMemScan={() => setMemScanActive((s) => !s)}
       mox={mox}
       onToggleMox={toggleMox}
       vox={vox}
@@ -424,26 +503,28 @@ export function App() {
       onUpdateRx={updateRx}
       agcMode={rx.agcMode}
       onSelectAgc={(m: AgcMode) => updateRx({ agcMode: m })}
-      compLevel={compLevel}
-      onChangeCompLevel={setCompLevel}
-      moni={moni}
-      onToggleMoni={() => setMoni((s) => !s)}
-      bkIn={bkIn}
-      onToggleBkIn={() => setBkIn((s) => !s)}
-      onToggleDim={() => setDim((s) => !s)}
-      onToggleMScope={() => setMScope((s) => !s)}
-      onToggleMenu={() => setMenuOpen((s) => !s)}
-      onToggleHelp={() => setHelpOpen((s) => !s)}
-      onToggleCompact={() => setCompact((s) => !s)}
-      onExit={() => {
-        setMenuOpen(false);
-        setHelpOpen(false);
-      }}
+      onToggleNb={() => updateRx({ nbLevel: rx.nbLevel > 0 ? 0 : 6 })}
+      onToggleNr={() => updateRx({ nrLevel: rx.nrLevel > 0 ? 0 : 6 })}
+      onToggleAtt={() => updateRx({ attEnabled: !rx.attEnabled })}
+      onToggleIpo={() => updateRx({ ipoEnabled: !rx.ipoEnabled })}
+      onToggleApf={() => updateRx({ apfEnabled: !rx.apfEnabled })}
+      onToggleDnr={() => updateRx({ dnrEnabled: !rx.dnrEnabled })}
+      compEnabled={compEnabled}
+      onToggleComp={() => setCompEnabled((s) => !s)}
+      procLevel={procLevel}
+      onChangeProcLevel={setProcLevel}
+      moniLevel={moniLevel}
+      onChangeMoniLevel={setMoniLevel}
+      voxDelayKnob={voxDelayKnob}
+      onChangeVoxDelayKnob={setVoxDelayKnob}
+      micGain={micGain}
+      onChangeMicGain={setMicGain}
+      txPower={txPower}
+      onChangeTxPower={setTxPower}
+      keySpeed={keySpeed}
+      onChangeKeySpeed={setKeySpeed}
       scanning={scanning}
       onToggleScan={() => setScanning((s) => !s)}
-      onToggleScanDir={() => setScanDir((d) => (d === 1 ? -1 : 1))}
-      memScanOnly={memScanOnly}
-      onToggleMemScan={() => setMemScanOnly((s) => !s)}
       signalDb={meter.sMeterDb}
       audibleStationIds={meter.audibleStationIds}
       roster={roster}

@@ -1,5 +1,6 @@
 import { BANDS, type Band, type FilterWidth, type Mode, type StationInfo } from "@koden/shared";
 import type { AgcMode, ReceiveParams } from "../audio/engine.js";
+import type { TuneStep } from "../App.js";
 import { SMeter } from "./SMeter.js";
 import { Waterfall } from "./Waterfall.js";
 import { VfoDial } from "./VfoDial.js";
@@ -16,15 +17,24 @@ interface RadioPanelProps {
   connectionStatus: string;
   onPowerOff: () => void;
   dim: boolean;
+  onToggleDim: () => void;
   mScope: boolean;
+  onToggleMScope: () => void;
   menuOpen: boolean;
-  helpOpen: boolean;
-  compact: boolean;
+  onToggleMenu: () => void;
+  onCloseMenu: () => void;
+  tunerActive: boolean;
+  onTuner: () => void;
+  ant: "ANT1" | "ANT2";
+  onToggleAnt: () => void;
+  moniEnabled: boolean;
+  onToggleMoni: () => void;
 
   vfoA: VfoDisplay;
   vfoB: VfoDisplay;
   activeVfo: "A" | "B";
   onSelectVfo: (v: "A" | "B") => void;
+  onSwapVfos: () => void;
   split: boolean;
   onToggleSplit: () => void;
 
@@ -32,23 +42,31 @@ interface RadioPanelProps {
   onTuneKnob: (freqKHz: number) => void;
   onModeSelect: (mode: Mode) => void;
   onBandSelect: (band: Band) => void;
+  vfoLocked: boolean;
+  onToggleLock: () => void;
+  tuneStep: TuneStep;
+  onSetTuneStep: (step: TuneStep) => void;
+  onStepUp: () => void;
+  onStepDown: () => void;
 
   ritEnabled: boolean;
   onToggleRit: () => void;
-  ritHz: number;
-  onChangeRitHz: (hz: number) => void;
-  onClearRit: () => void;
-  onDeltaTx: () => void;
-  onDeltaRx: () => void;
+  xitEnabled: boolean;
+  onToggleXit: () => void;
+  offsetHz: number;
+  onChangeOffsetHz: (hz: number) => void;
+  onClear: () => void;
 
   filterWidth: FilterWidth;
-  onSelectFilterWidth: (w: FilterWidth) => void;
+  onCycleFilterWidth: () => void;
 
   vfoMMode: "VFO" | "M";
   onToggleVfoM: () => void;
-  pendingMemSlot: number | null;
-  onDigit: (n: number) => void;
-  onEnt: () => void;
+  memIndex: number;
+  onMemToVfo: () => void;
+  onMemIn: () => void;
+  memScanActive: boolean;
+  onToggleMemScan: () => void;
 
   mox: boolean;
   onToggleMox: () => void;
@@ -60,25 +78,30 @@ interface RadioPanelProps {
   onUpdateRx: (p: Partial<ReceiveParams>) => void;
   agcMode: AgcMode;
   onSelectAgc: (m: AgcMode) => void;
-  compLevel: number;
-  onChangeCompLevel: (v: number) => void;
-  moni: boolean;
-  onToggleMoni: () => void;
-  bkIn: boolean;
-  onToggleBkIn: () => void;
+  onToggleNb: () => void;
+  onToggleNr: () => void;
+  onToggleAtt: () => void;
+  onToggleIpo: () => void;
+  onToggleApf: () => void;
+  onToggleDnr: () => void;
 
-  onToggleDim: () => void;
-  onToggleMScope: () => void;
-  onToggleMenu: () => void;
-  onToggleHelp: () => void;
-  onToggleCompact: () => void;
-  onExit: () => void;
+  compEnabled: boolean;
+  onToggleComp: () => void;
+  procLevel: number;
+  onChangeProcLevel: (v: number) => void;
+  moniLevel: number;
+  onChangeMoniLevel: (v: number) => void;
+  voxDelayKnob: number;
+  onChangeVoxDelayKnob: (v: number) => void;
+  micGain: number;
+  onChangeMicGain: (v: number) => void;
+  txPower: number;
+  onChangeTxPower: (v: number) => void;
+  keySpeed: number;
+  onChangeKeySpeed: (v: number) => void;
 
   scanning: boolean;
   onToggleScan: () => void;
-  onToggleScanDir: () => void;
-  memScanOnly: boolean;
-  onToggleMemScan: () => void;
 
   signalDb: number;
   audibleStationIds: string[];
@@ -87,7 +110,14 @@ interface RadioPanelProps {
   events: string[];
 }
 
-const MEMORY_KEYS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
+const MODE_BUTTONS: { label: string; mode: Mode }[] = [
+  { label: "LSB", mode: "LSB" },
+  { label: "USB", mode: "USB" },
+  { label: "CW", mode: "CW" },
+  { label: "AM", mode: "AM" },
+  { label: "FM", mode: "FM" },
+  { label: "DIG", mode: "DATA" },
+];
 
 export function RadioPanel(props: RadioPanelProps) {
   const {
@@ -95,34 +125,51 @@ export function RadioPanel(props: RadioPanelProps) {
     connectionStatus,
     onPowerOff,
     dim,
+    onToggleDim,
     mScope,
+    onToggleMScope,
     menuOpen,
-    helpOpen,
-    compact,
+    onToggleMenu,
+    onCloseMenu,
+    tunerActive,
+    onTuner,
+    ant,
+    onToggleAnt,
+    moniEnabled,
+    onToggleMoni,
     vfoA,
     vfoB,
     activeVfo,
     onSelectVfo,
+    onSwapVfos,
     split,
     onToggleSplit,
     band,
     onTuneKnob,
     onModeSelect,
     onBandSelect,
+    vfoLocked,
+    onToggleLock,
+    tuneStep,
+    onSetTuneStep,
+    onStepUp,
+    onStepDown,
     ritEnabled,
     onToggleRit,
-    ritHz,
-    onChangeRitHz,
-    onClearRit,
-    onDeltaTx,
-    onDeltaRx,
+    xitEnabled,
+    onToggleXit,
+    offsetHz,
+    onChangeOffsetHz,
+    onClear,
     filterWidth,
-    onSelectFilterWidth,
+    onCycleFilterWidth,
     vfoMMode,
     onToggleVfoM,
-    pendingMemSlot,
-    onDigit,
-    onEnt,
+    memIndex,
+    onMemToVfo,
+    onMemIn,
+    memScanActive,
+    onToggleMemScan,
     mox,
     onToggleMox,
     vox,
@@ -132,23 +179,28 @@ export function RadioPanel(props: RadioPanelProps) {
     onUpdateRx,
     agcMode,
     onSelectAgc,
-    compLevel,
-    onChangeCompLevel,
-    moni,
-    onToggleMoni,
-    bkIn,
-    onToggleBkIn,
-    onToggleDim,
-    onToggleMScope,
-    onToggleMenu,
-    onToggleHelp,
-    onToggleCompact,
-    onExit,
+    onToggleNb,
+    onToggleNr,
+    onToggleAtt,
+    onToggleIpo,
+    onToggleApf,
+    onToggleDnr,
+    compEnabled,
+    onToggleComp,
+    procLevel,
+    onChangeProcLevel,
+    moniLevel,
+    onChangeMoniLevel,
+    voxDelayKnob,
+    onChangeVoxDelayKnob,
+    micGain,
+    onChangeMicGain,
+    txPower,
+    onChangeTxPower,
+    keySpeed,
+    onChangeKeySpeed,
     scanning,
     onToggleScan,
-    onToggleScanDir,
-    memScanOnly,
-    onToggleMemScan,
     signalDb,
     audibleStationIds,
     roster,
@@ -157,42 +209,52 @@ export function RadioPanel(props: RadioPanelProps) {
   } = props;
 
   const activeVfoState = activeVfo === "A" ? vfoA : vfoB;
+  const otherVfo = activeVfo === "A" ? vfoB : vfoA;
   const audibleSet = new Set(audibleStationIds);
+  const filterLabel = filterWidth === "narrow" ? "NAR" : filterWidth === "normal" ? "MID" : "WIDE";
 
   return (
     <div className={`panel ${dim ? "panel--dim" : ""}`}>
       <div className="panel__top">
         <div className="panel__quick-col">
           <PanelButton label="POWER" onClick={onPowerOff} title="Power off and disconnect" />
-          <PanelButton label="MOX" active={mox} onClick={onToggleMox} title="Manual transmit (push-to-talk toggle)" />
+          <PanelButton label="TUNER" active={tunerActive} onClick={onTuner} title="Run the antenna tuner" />
+          <PanelButton label={ant} onClick={onToggleAnt} title="Switch antenna" />
+          <PanelButton label="MONI" active={moniEnabled} onClick={onToggleMoni} title="Monitor/sidetone" />
           <PanelButton label="VOX" active={vox} onClick={onToggleVox} title="Voice-activated transmit" />
-          <PanelButton label="DIM" active={dim} onClick={onToggleDim} title="Dim the display" />
+          <PanelButton label="MOX" active={mox} onClick={onToggleMox} title="Manual transmit (push-to-talk toggle)" />
         </div>
 
-        <div className="panel__meter-block">
-          <SMeter signalDb={signalDb} />
-          <div className="panel__meter-labels">P.AMP&nbsp;&nbsp;SWR&nbsp;&nbsp;COMP&nbsp;&nbsp;ALC</div>
-        </div>
+        <div className="panel__dual-display">
+          <div className={`panel__scope-display ${mScope ? "panel__scope-display--big" : ""}`}>
+            <SMeter signalDb={signalDb} />
+            <Waterfall signalDb={signalDb} active={transmitting} />
+          </div>
 
-        <div className="panel__display">
-          <div className="panel__display-row">
-            <span className={`panel__indicator panel__indicator--tx ${transmitting ? "panel__indicator--on" : ""}`}>TX</span>
-            <span className={`panel__indicator panel__indicator--rx ${!transmitting ? "panel__indicator--on" : ""}`}>RX</span>
-            <span className="panel__vfo-tag">VFO-{activeVfo}</span>
-            <span className="panel__mode-tag">{activeVfoState.mode}</span>
-          </div>
-          <div className="panel__freq-main">{formatFreq(activeVfoState.freqKHz)}</div>
-          <div className="panel__display-row panel__display-row--secondary">
-            <span>{activeVfo === "A" ? "B" : "A"}: VFO-{activeVfo === "A" ? "B" : "A"} {(activeVfo === "A" ? vfoB : vfoA).mode}</span>
-            <span>{formatFreq((activeVfo === "A" ? vfoB : vfoA).freqKHz)}</span>
-            <span>RIT {ritEnabled ? (ritHz >= 0 ? "+" : "") + (ritHz / 1000).toFixed(2) : "OFF"}</span>
-            <span>IF {rx.ifShiftHz}</span>
-          </div>
-          <div className="panel__display-row panel__display-row--tertiary">
-            <span>BAND {band?.id.toUpperCase() ?? "--"}</span>
-            <span>FIL {filterWidth === "narrow" ? "1" : filterWidth === "normal" ? "2" : "3"}</span>
-            <span>M.CH {pendingMemSlot ?? "--"}</span>
-            <span>{split ? "SPLIT" : ""}</span>
+          <div className="panel__display">
+            <div className="panel__display-row">
+              <span className={`panel__indicator panel__indicator--tx ${transmitting ? "panel__indicator--on" : ""}`}>TX</span>
+              <span className={`panel__indicator panel__indicator--rx ${!transmitting ? "panel__indicator--on" : ""}`}>RX</span>
+              <span className="panel__vfo-tag">VFO-{activeVfo}</span>
+              <span className="panel__mode-tag">{activeVfoState.mode}</span>
+              {vfoLocked && <span className="panel__mode-tag">LOCK</span>}
+            </div>
+            <div className="panel__freq-main">{formatFreq(activeVfoState.freqKHz)}</div>
+            <div className="panel__display-row panel__display-row--secondary">
+              <span>
+                VFO-{activeVfo === "A" ? "B" : "A"} {otherVfo.mode}
+              </span>
+              <span>{formatFreq(otherVfo.freqKHz)}</span>
+              <span>RIT {ritEnabled ? (offsetHz >= 0 ? "+" : "") + (offsetHz / 1000).toFixed(2) : "OFF"}</span>
+              <span>XIT {xitEnabled ? (offsetHz >= 0 ? "+" : "") + (offsetHz / 1000).toFixed(2) : "OFF"}</span>
+            </div>
+            <div className="panel__display-row panel__display-row--tertiary">
+              <span>BAND {band?.id.toUpperCase() ?? "--"}</span>
+              <span>R.FLT {filterLabel}</span>
+              <span>M.CH {memIndex}</span>
+              <span>{split ? "SPLIT" : ""}</span>
+              <span>{ant}</span>
+            </div>
           </div>
         </div>
 
@@ -206,53 +268,51 @@ export function RadioPanel(props: RadioPanelProps) {
 
       <div className="panel__buttonrow">
         <PanelButton label="MENU" active={menuOpen} onClick={onToggleMenu} />
-        <PanelButton label="FUNCTION" active={helpOpen} onClick={onToggleHelp} />
-        <PanelButton label="M.SCOPE" active={mScope} onClick={onToggleMScope} />
-        <PanelButton label="QUICK" active={compact} onClick={onToggleCompact} />
-        <PanelButton label="EXIT" onClick={onExit} />
+        <PanelButton label="DISP" active={dim} onClick={onToggleDim} title="Dim the display" />
+        <PanelButton label="SCOPE" active={mScope} onClick={onToggleMScope} />
+        <PanelButton label="ATT" active={rx.attEnabled} onClick={onToggleAtt} title="Front-end attenuator" />
+        <PanelButton label="IPO" active={rx.ipoEnabled} onClick={onToggleIpo} title="Preamp bypass" />
+        <PanelButton label="NB" active={rx.nbLevel > 0} onClick={onToggleNb} title="Noise blanker" />
+        <PanelButton label="NR" active={rx.nrLevel > 0} onClick={onToggleNr} title="Noise reduction" />
+        <PanelButton label="APF" active={rx.apfEnabled} onClick={onToggleApf} title="Audio peak filter (CW)" />
+        <PanelButton label="R.FLT" onClick={onCycleFilterWidth} title={`Roofing filter: ${filterLabel}`} />
+        <PanelButton label="CMP" active={compEnabled} onClick={onToggleComp} title="Speech processor" />
+        <PanelButton label="DNR" active={rx.dnrEnabled} onClick={onToggleDnr} title="Digital noise reduction" />
+        <div className="agc-switch agc-switch--inline">
+          <div className="agc-switch__label">AGC</div>
+          <div className="agc-switch__options">
+            {(["OFF", "FAST", "SLOW"] as AgcMode[]).map((m) => (
+              <PanelButton key={m} label={m} small active={agcMode === m} onClick={() => onSelectAgc(m)} />
+            ))}
+          </div>
+        </div>
       </div>
 
-      {helpOpen && (
-        <div className="panel__overlay">
-          Drag knobs vertically (or scroll) to adjust. MOX toggles transmit on/off; VOX keys
-          automatically when you speak. Tune the big knob or click a BAND button, then pick a
-          MODE. SQUELCH mutes the channel until a signal breaks through; NOTCH/IF SHIFT/NB/NR
-          shape what you hear. RIT offsets your receive frequency without moving your transmit
-          frequency; SPLIT transmits on the other VFO.
-        </div>
-      )}
       {menuOpen && (
         <div className="panel__overlay">
-          Connected to <code>{callsign}</code>&apos;s session. Server: multiplayer HF propagation
-          simulator -- static, QSB fading, meteor scatter, and band conditions are computed
-          server-side and are unique to every listener.
+          <button className="panel__overlay-close" onClick={onCloseMenu} title="Close">
+            ×
+          </button>
+          Connected to <code>{callsign}</code>&apos;s session on a multiplayer HF propagation
+          simulator. Drag knobs vertically (or scroll) to adjust. MOX toggles transmit on/off; VOX
+          keys automatically when you speak. RIT offsets your receive frequency, XIT offsets your
+          transmit frequency; SPLIT transmits on the other VFO. TUNER runs a simulated antenna
+          match. Static, QSB fading, meteor scatter, and band conditions are computed server-side
+          and are unique to every listener.
         </div>
       )}
 
       <div className="panel__body">
         <div className="panel__knob-col">
           <div className="knob-row">
-            <Knob label="AF GAIN" value={rx.afGain} min={0} max={10} onChange={(v) => onUpdateRx({ afGain: v })} />
-            <Knob label="RF GAIN" value={rx.rfGain} min={0} max={10} onChange={(v) => onUpdateRx({ rfGain: v })} />
-            <Knob label="SQUELCH" value={rx.squelch} min={0} max={10} onChange={(v) => onUpdateRx({ squelch: v })} />
+            <Knob label="MIC GAIN" value={micGain} min={0} max={10} onChange={onChangeMicGain} />
+            <Knob label="RF POWER" value={txPower} min={0} max={10} onChange={onChangeTxPower} />
+            <Knob label="KEY SPEED" value={keySpeed} min={0} max={10} onChange={onChangeKeySpeed} />
           </div>
           <div className="knob-row">
-            <Knob label="NB LEVEL" value={rx.nbLevel} min={0} max={10} onChange={(v) => onUpdateRx({ nbLevel: v })} />
-            <Knob label="NR LEVEL" value={rx.nrLevel} min={0} max={10} onChange={(v) => onUpdateRx({ nrLevel: v })} />
-            <Knob label="NOTCH" value={rx.notchDepth} min={0} max={10} onChange={(v) => onUpdateRx({ notchDepth: v })} />
-            <div className="agc-switch">
-              <div className="agc-switch__label">AGC</div>
-              <div className="agc-switch__options">
-                {(["OFF", "FAST", "SLOW"] as AgcMode[]).map((m) => (
-                  <PanelButton key={m} label={m} small active={agcMode === m} onClick={() => onSelectAgc(m)} />
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="knob-row">
-            <Knob label="COMP" value={compLevel} min={0} max={10} onChange={onChangeCompLevel} />
-            <PanelButton label="BK-IN" active={bkIn} onClick={onToggleBkIn} />
-            <PanelButton label="MONI" active={moni} onClick={onToggleMoni} />
+            <Knob label="PROC" value={procLevel} min={0} max={10} onChange={onChangeProcLevel} />
+            <Knob label="MONI" value={moniLevel} min={0} max={10} onChange={onChangeMoniLevel} />
+            <Knob label="VOX DELAY" value={voxDelayKnob} min={0} max={10} onChange={onChangeVoxDelayKnob} />
           </div>
           <div className="panel__jacks">
             <div className="panel__jack">PHONES</div>
@@ -263,18 +323,34 @@ export function RadioPanel(props: RadioPanelProps) {
         <div className="panel__center-col">
           <div className="panel__vfo-row">
             <div className="mode-col">
-              {(["LSB", "USB", "CW", "AM", "FM", "RTTY", "DATA"] as Mode[]).map((m) => (
+              {MODE_BUTTONS.map(({ label, mode }) => (
                 <PanelButton
-                  key={m}
-                  label={m}
-                  active={activeVfoState.mode === m}
-                  onClick={() => onModeSelect(m)}
-                  title={band && !band.allowedModes.includes(m) ? "Not typically used on this band" : undefined}
+                  key={label}
+                  label={label}
+                  active={activeVfoState.mode === mode}
+                  onClick={() => onModeSelect(mode)}
+                  title={band && !band.allowedModes.includes(mode) ? "Not typically used on this band" : undefined}
                 />
               ))}
             </div>
 
-            <VfoDial freqKHz={activeVfoState.freqKHz} band={band} onChange={onTuneKnob} />
+            <div className="tuning-block">
+              <div className="tuning-block__side">
+                <PanelButton label="FAST" active={tuneStep === "FAST"} onClick={() => onSetTuneStep("FAST")} />
+                <PanelButton label="LOCK" active={vfoLocked} onClick={onToggleLock} />
+                <PanelButton label="SCAN" active={scanning} onClick={onToggleScan} />
+                <PanelButton label="CLEAR" onClick={onClear} title="Clear RIT/XIT offset" />
+              </div>
+
+              <VfoDial freqKHz={activeVfoState.freqKHz} band={band} onChange={onTuneKnob} />
+
+              <div className="tuning-block__side">
+                <PanelButton label="▲" small onClick={onStepUp} />
+                <PanelButton label="▼" small onClick={onStepDown} />
+                <PanelButton label="FINE" active={tuneStep === "FINE"} onClick={() => onSetTuneStep("FINE")} />
+                <PanelButton label="COARSE" active={tuneStep === "COARSE"} onClick={() => onSetTuneStep("COARSE")} />
+              </div>
+            </div>
 
             <div className="band-grid">
               {BANDS.map((b) => (
@@ -286,98 +362,94 @@ export function RadioPanel(props: RadioPanelProps) {
                   title={b.name}
                 />
               ))}
-              <PanelButton label="ENT" small onClick={onEnt} />
             </div>
-          </div>
-
-          <div className="panel__vfo-controls-row">
-            <PanelButton label="RIT" active={ritEnabled} onClick={onToggleRit} />
-            <PanelButton label="ΔTX" onClick={onDeltaTx} title="Copy this VFO to the other and enable split" />
-            <PanelButton label="CLEAR" onClick={onClearRit} title="Clear RIT offset" />
-            <PanelButton label="IF SHIFT" onClick={() => onUpdateRx({ ifShiftHz: 0 })} title="Reset IF shift" />
-            <PanelButton label="ΔRX" onClick={onDeltaRx} title="Copy the other VFO's frequency to this one" />
           </div>
         </div>
 
         <div className="panel__right-col">
           <div className="panel__memory-row">
-            <div className="memory-keypad">
-              {MEMORY_KEYS.map((n) => (
-                <PanelButton key={n} small label={String(n)} active={pendingMemSlot === n} onClick={() => onDigit(n)} />
-              ))}
-              <PanelButton small label="." onClick={() => {}} />
-              <PanelButton small label="ENT" onClick={onEnt} />
+            <div className="button-group">
+              <div className="button-group__label">MEMORY {memIndex}</div>
+              <PanelButton small label="M&gt;VFO" onClick={onMemToVfo} title="Recall next memory channel" />
+              <PanelButton small label="M.IN" onClick={onMemIn} title="Store this VFO to the current memory channel" />
+              <PanelButton small label="MW" active={memScanActive} onClick={onToggleMemScan} title="Memory scan" />
             </div>
             <div className="vfo-select">
-              <PanelButton small label="A" active={activeVfo === "A"} onClick={() => onSelectVfo("A")} />
-              <PanelButton small label="B" active={activeVfo === "B"} onClick={() => onSelectVfo("B")} />
-              <PanelButton small label="VFO/M" active={vfoMMode === "M"} onClick={onToggleVfoM} />
+              <PanelButton small label="A/B" active={activeVfo === "B"} onClick={() => onSelectVfo(activeVfo === "A" ? "B" : "A")} />
+              <PanelButton small label="A⇄B" onClick={onSwapVfos} title="Swap VFO A and B" />
               <PanelButton small label="SPLIT" active={split} onClick={onToggleSplit} />
+              <PanelButton small label="VFO/M" active={vfoMMode === "M"} onClick={onToggleVfoM} />
             </div>
           </div>
 
           <div className="knob-row">
-            <Knob label="RIT" value={ritHz} min={-1500} max={1500} onChange={onChangeRitHz} />
-            <Knob label="IF SHIFT" value={rx.ifShiftHz} min={-1500} max={1500} onChange={(v) => onUpdateRx({ ifShiftHz: v })} />
+            <Knob
+              label="TWIN PBT"
+              value={rx.width}
+              min={0}
+              max={10}
+              onChange={(v) => onUpdateRx({ width: v })}
+              onReset={() => onUpdateRx({ width: 10 })}
+            />
             <Knob label="NOTCH" value={rx.notchFreqHz} min={300} max={3000} onChange={(v) => onUpdateRx({ notchFreqHz: v })} />
           </div>
           <div className="knob-row">
             <Knob size="small" label="PBT" value={rx.pbtQ} min={0} max={10} onChange={(v) => onUpdateRx({ pbtQ: v })} />
-            <Knob size="small" label="WIDTH" value={rx.width} min={0} max={10} onChange={(v) => onUpdateRx({ width: v })} />
-            <Knob size="small" label="WIDTH" value={rx.notchWidth} min={0} max={10} onChange={(v) => onUpdateRx({ notchWidth: v })} />
+            <Knob size="small" label="NOTCH WIDTH" value={rx.notchWidth} min={0} max={10} onChange={(v) => onUpdateRx({ notchWidth: v })} />
           </div>
 
-          <div className="panel__scan-filter-row">
+          <div className="panel__rit-xit-row">
             <div className="button-group">
-              <div className="button-group__label">SCAN</div>
-              <PanelButton small label="SCAN" active={scanning} onClick={onToggleScan} />
-              <PanelButton small label="PROG" onClick={onToggleScanDir} title="Reverse scan direction" />
-              <PanelButton small label="MEM" active={memScanOnly} onClick={onToggleMemScan} />
+              <div className="button-group__label">RIT/XIT</div>
+              <PanelButton small label="RIT" active={ritEnabled} onClick={onToggleRit} />
+              <PanelButton small label="XIT" active={xitEnabled} onClick={onToggleXit} />
+              <Knob size="small" label="OFFSET" value={offsetHz} min={-1500} max={1500} onChange={onChangeOffsetHz} />
             </div>
-            <div className="button-group">
-              <div className="button-group__label">FILTER</div>
-              <PanelButton small label="FIL1" active={filterWidth === "narrow"} onClick={() => onSelectFilterWidth("narrow")} />
-              <PanelButton small label="FIL2" active={filterWidth === "normal"} onClick={() => onSelectFilterWidth("normal")} />
-              <PanelButton small label="FIL3" active={filterWidth === "wide"} onClick={() => onSelectFilterWidth("wide")} />
-            </div>
+            <Knob label="IF SHIFT" value={rx.ifShiftHz} min={-1500} max={1500} onChange={(v) => onUpdateRx({ ifShiftHz: v })} />
+            <Knob label="AF⇒RF" value={rx.afRfBalance} min={0} max={10} onChange={(v) => onUpdateRx({ afRfBalance: v })} />
+          </div>
+
+          <div className="knob-row">
+            <Knob label="AF GAIN" value={rx.afGain} min={0} max={10} onChange={(v) => onUpdateRx({ afGain: v })} />
+            <Knob label="RF GAIN" value={rx.rfGain} min={0} max={10} onChange={(v) => onUpdateRx({ rfGain: v })} />
+            <Knob label="SQL" value={rx.squelch} min={0} max={10} onChange={(v) => onUpdateRx({ squelch: v })} />
           </div>
         </div>
       </div>
 
-      <div className={`panel__monitor-bay ${mScope ? "panel__monitor-bay--scope" : ""}`}>
-        <Waterfall signalDb={signalDb} active={transmitting} />
-        {!compact && (
-          <div className="panel__side-info">
-            <div className="panel__roster-title">STATIONS ON FREQ</div>
-            <ul className="panel__roster">
-              {roster.map((s) => (
-                <li
-                  key={s.id}
-                  className={[
-                    s.id === ownId ? "panel__roster-item--self" : "",
-                    s.transmitting ? "panel__roster-item--tx" : "",
-                    audibleSet.has(s.id) ? "panel__roster-item--audible" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                >
-                  <span className="panel__roster-call">{s.callsign}</span>
-                  <span className="panel__roster-freq">
-                    {s.txFreqKHz.toFixed(1)} {s.mode}
-                  </span>
-                  {s.transmitting && <span className="panel__roster-tx-dot">TX</span>}
-                </li>
-              ))}
-              {roster.length === 0 && <li className="panel__roster-empty">No stations connected</li>}
-            </ul>
-            <div className="panel__log-title">BAND LOG</div>
-            <ul className="panel__log">
-              {events.map((e, i) => (
-                <li key={i}>{e}</li>
-              ))}
-            </ul>
-          </div>
-        )}
+      <div className="panel__monitor-bay">
+        <div className="panel__side-info">
+          <div className="panel__roster-title">STATIONS ON FREQ</div>
+          <ul className="panel__roster">
+            {roster.map((s) => (
+              <li
+                key={s.id}
+                className={[
+                  s.id === ownId ? "panel__roster-item--self" : "",
+                  s.transmitting ? "panel__roster-item--tx" : "",
+                  audibleSet.has(s.id) ? "panel__roster-item--audible" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              >
+                <span className="panel__roster-call">{s.callsign}</span>
+                <span className="panel__roster-freq">
+                  {s.txFreqKHz.toFixed(1)} {s.mode}
+                </span>
+                {s.transmitting && <span className="panel__roster-tx-dot">TX</span>}
+              </li>
+            ))}
+            {roster.length === 0 && <li className="panel__roster-empty">No stations connected</li>}
+          </ul>
+        </div>
+        <div className="panel__side-info">
+          <div className="panel__log-title">BAND LOG</div>
+          <ul className="panel__log">
+            {events.map((e, i) => (
+              <li key={i}>{e}</li>
+            ))}
+          </ul>
+        </div>
       </div>
 
       <div className="panel__footer">

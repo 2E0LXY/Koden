@@ -66,12 +66,6 @@ export function VfoDial({ freqKHz, band, onChange }: VfoDialProps) {
       >
         <div className="vfo__knob-marker" />
       </div>
-      <div className="vfo__buttons">
-        <button onClick={() => onChange(clamp(freqKHz - 1))}>-1</button>
-        <button onClick={() => onChange(clamp(freqKHz - 0.1))}>-0.1</button>
-        <button onClick={() => onChange(clamp(freqKHz + 0.1))}>+0.1</button>
-        <button onClick={() => onChange(clamp(freqKHz + 1))}>+1</button>
-      </div>
     </div>
   );
 }
