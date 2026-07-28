@@ -4,6 +4,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import {
   BANDS,
   ClientMessage,
+  DEFAULT_ANTENNA,
   FRAME_BYTES,
   SAMPLE_RATE,
   type ServerMessage,
@@ -41,6 +42,8 @@ function toStationInfo(s: Station): StationInfo {
     txFreqKHz: s.txFreqKHz,
     mode: s.mode,
     transmitting: s.transmitting,
+    antenna: s.antenna,
+    headingDeg: s.headingDeg,
   };
 }
 
@@ -96,6 +99,8 @@ wss.on("connection", (ws) => {
         txFreqKHz: startFreq,
         mode: defaultBand.defaultMode,
         filterWidth: "normal",
+        antenna: DEFAULT_ANTENNA,
+        headingDeg: 0,
         transmitting: false,
         pendingFrame: null,
         connectedAt: Date.now(),
@@ -124,6 +129,18 @@ wss.on("connection", (ws) => {
     } else if (parsed.type === "ptt") {
       station.transmitting = parsed.active;
       if (!parsed.active) station.pendingFrame = null;
+      broadcastRoster();
+    } else if (parsed.type === "antenna") {
+      station.antenna = parsed.antenna;
+      station.headingDeg = parsed.headingDeg;
+      broadcastRoster();
+    } else if (parsed.type === "profile") {
+      if (!isValidGrid(parsed.grid)) {
+        send(ws, { type: "error", message: "Invalid grid locator" });
+        return;
+      }
+      station.callsign = parsed.callsign;
+      station.grid = parsed.grid;
       broadcastRoster();
     }
   });

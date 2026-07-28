@@ -5,6 +5,16 @@ export const ModeSchema = z.enum(["USB", "LSB", "CW", "AM", "FM", "RTTY", "DATA"
 export const FilterWidthSchema = z.enum(["narrow", "normal", "wide"]);
 export type FilterWidth = z.infer<typeof FilterWidthSchema>;
 
+export const AntennaIdSchema = z.enum([
+  "longwire",
+  "vertical",
+  "dipole",
+  "g5rv",
+  "yagi-small",
+  "yagi-3el",
+  "yagi-5el",
+]);
+
 /** Client -> server: introduce this station. */
 export const HelloMessage = z.object({
   type: z.literal("hello"),
@@ -33,10 +43,26 @@ export const PttMessage = z.object({
   active: z.boolean(),
 });
 
+/** Client -> server: antenna type and/or rotator heading changed. */
+export const AntennaMessage = z.object({
+  type: z.literal("antenna"),
+  antenna: AntennaIdSchema,
+  headingDeg: z.number().min(0).max(359),
+});
+
+/** Client -> server: operator changed their callsign and/or grid locator from the setup panel. */
+export const ProfileMessage = z.object({
+  type: z.literal("profile"),
+  callsign: z.string().min(1).max(12),
+  grid: z.string().min(4).max(6),
+});
+
 export const ClientMessage = z.discriminatedUnion("type", [
   HelloMessage,
   TuneMessage,
   PttMessage,
+  AntennaMessage,
+  ProfileMessage,
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
@@ -48,6 +74,8 @@ export const StationInfoSchema = z.object({
   txFreqKHz: z.number(),
   mode: ModeSchema,
   transmitting: z.boolean(),
+  antenna: AntennaIdSchema,
+  headingDeg: z.number(),
 });
 export type StationInfo = z.infer<typeof StationInfoSchema>;
 

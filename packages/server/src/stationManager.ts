@@ -1,5 +1,5 @@
 import type { WebSocket } from "ws";
-import type { FilterWidth, Mode } from "@koden/shared";
+import type { AntennaId, FilterWidth, Mode } from "@koden/shared";
 
 export interface Station {
   id: string;
@@ -12,6 +12,9 @@ export interface Station {
   txFreqKHz: number;
   mode: Mode;
   filterWidth: FilterWidth;
+  antenna: AntennaId;
+  /** Rotator heading in degrees (0-359); only meaningful for rotatable (beam) antennas. */
+  headingDeg: number;
   transmitting: boolean;
   /** Latest audio frame received this tick from this station, if any. */
   pendingFrame: Int16Array | null;

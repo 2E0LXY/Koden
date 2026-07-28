@@ -3,11 +3,13 @@ import { isValidGrid } from "@koden/shared";
 
 interface JoinFormProps {
   onJoin: (callsign: string, grid: string) => void;
+  defaultCallsign?: string;
+  defaultGrid?: string;
 }
 
-export function JoinForm({ onJoin }: JoinFormProps) {
-  const [callsign, setCallsign] = useState("");
-  const [grid, setGrid] = useState("");
+export function JoinForm({ onJoin, defaultCallsign = "", defaultGrid = "" }: JoinFormProps) {
+  const [callsign, setCallsign] = useState(defaultCallsign);
+  const [grid, setGrid] = useState(defaultGrid);
   const [error, setError] = useState<string | null>(null);
 
   const submit = (e: React.FormEvent) => {

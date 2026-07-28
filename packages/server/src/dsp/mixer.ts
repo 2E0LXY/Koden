@@ -3,6 +3,7 @@ import {
   FRAME_SAMPLES,
   type Band,
   type ServerMessage,
+  antennaById,
   daylightFactor,
   findBand,
   gridToLatLon,
@@ -77,6 +78,10 @@ export class MixerEngine {
             rxMode: rx.mode,
             rxFilterWidth: rx.filterWidth,
             band: rxBand,
+            txAntenna: tx.antenna,
+            txHeadingDeg: tx.headingDeg,
+            rxAntenna: rx.antenna,
+            rxHeadingDeg: rx.headingDeg,
           },
           nowMs,
           dtMs,
@@ -112,8 +117,12 @@ export class MixerEngine {
       const crackleRateMultiplier = 1 + rxBand.daytimeAbsorption * (1 - rxDaylight) * 0.8;
 
       const noiseGen = this.getNoiseGenerator(rx, rxBand);
+      const antennaNoiseAdjustDb = antennaById(rx.antenna)?.noiseFloorAdjustDb ?? 0;
       const effectiveNoiseFloorDb =
-        rxBand.baseNoiseFloorDb + modeNoiseGainDb(rx.mode, rx.filterWidth) + nightQrnBoostDb;
+        rxBand.baseNoiseFloorDb +
+        modeNoiseGainDb(rx.mode, rx.filterWidth) +
+        nightQrnBoostDb +
+        antennaNoiseAdjustDb;
       const noiseFrame = noiseGen.generate(FRAME_SAMPLES, effectiveNoiseFloorDb, crackleRateMultiplier);
 
       // FM's capture effect: once a signal is comfortably above the noise

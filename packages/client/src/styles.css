@@ -375,11 +375,20 @@ button {
 
 .panel__knob-col,
 .panel__center-col,
-.panel__right-col {
+.panel__right-col,
+.panel__antenna-col {
   background: #101013;
   border: 1px solid #2a2a2e;
   border-radius: 8px;
   padding: 14px;
+}
+
+.panel__antenna-col {
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
 }
 
 .panel__knob-col {
@@ -507,6 +516,25 @@ button {
   color: #201a08;
   font-weight: 700;
   box-shadow: 0 0 8px rgba(232, 184, 75, 0.5);
+}
+
+.panel-btn--ptt {
+  font-weight: 700;
+  letter-spacing: 1px;
+  touch-action: none;
+}
+.panel-btn--ptt.panel-btn--active {
+  background: linear-gradient(#ff5a3a, #b8331a);
+  border-color: #7a2210;
+  color: #fff;
+  box-shadow: 0 0 10px rgba(255, 90, 58, 0.6);
+}
+
+.antenna-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 5px;
+  width: 100%;
 }
 
 .agc-switch {
@@ -726,6 +754,170 @@ button {
   gap: 4px;
   font-size: 12px;
   max-height: 220px;
+}
+.panel__side-info--map {
+  max-height: none;
+  align-items: center;
+}
+
+/* ---------- Rotator compass ---------- */
+
+.rotator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.rotator__dial {
+  width: 130px;
+  height: 130px;
+  touch-action: none;
+  cursor: grab;
+}
+.rotator--disabled .rotator__dial {
+  cursor: default;
+  opacity: 0.5;
+}
+.rotator__ring {
+  fill: #101013;
+  stroke: #3a3a3e;
+  stroke-width: 1.5;
+}
+.rotator__tick-label {
+  fill: #a98a3f;
+  font-size: 9px;
+  font-family: "Courier New", monospace;
+}
+.rotator__needle {
+  stroke: #ff5a3a;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.rotator__hub {
+  fill: #e8b84b;
+}
+.rotator__heading {
+  font-family: "Courier New", monospace;
+  color: #e8b84b;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+
+/* ---------- Antenna map ---------- */
+
+.antenna-map {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.antenna-map__svg {
+  width: 100%;
+  max-width: 220px;
+  aspect-ratio: 1;
+}
+.antenna-map__ring {
+  fill: none;
+  stroke: #2a2a2e;
+  stroke-width: 1;
+}
+.antenna-map__ring--faint {
+  stroke: #1c1c20;
+}
+.antenna-map__compass-label {
+  fill: #7a6a3f;
+  font-size: 9px;
+  font-family: "Courier New", monospace;
+}
+.antenna-map__heading-arrow {
+  stroke: #ff5a3a;
+  stroke-width: 2;
+  color: #ff5a3a;
+}
+.antenna-map__self {
+  fill: #e8b84b;
+}
+.antenna-map__station {
+  cursor: pointer;
+}
+.antenna-map__dot {
+  fill: #6a9acb;
+}
+.antenna-map__dot--tx {
+  fill: #ff3b3b;
+}
+.antenna-map__label {
+  fill: #999;
+  font-size: 7px;
+  font-family: "Courier New", monospace;
+}
+.antenna-map__note {
+  font-size: 10px;
+  color: #666;
+  text-align: center;
+  padding: 8px;
+}
+
+/* ---------- Setup panel ---------- */
+
+.setup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #2a2a2e;
+}
+.setup-panel__section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.setup-panel__label {
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: #888;
+}
+.setup-panel__row {
+  display: flex;
+  gap: 6px;
+}
+.setup-panel__input,
+.setup-panel__select {
+  background: #060607;
+  border: 1px solid #3a3a3e;
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: #e8b84b;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+}
+.setup-panel__select {
+  width: 100%;
+  color: #ddd;
+}
+.setup-panel__button {
+  background: linear-gradient(#3a3a3e, #202023);
+  border: 1px solid #4a4a4e;
+  color: #ccc;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.setup-panel__button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.setup-panel__note {
+  font-size: 11px;
+  color: #666;
+}
+.setup-panel__checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #bbb;
 }
 
 .panel__roster-title,

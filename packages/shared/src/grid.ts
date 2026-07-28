@@ -68,6 +68,20 @@ export function gridDistanceKm(gridA: string, gridB: string): number {
   return EARTH_RADIUS_KM * c;
 }
 
+/** Initial great-circle bearing (forward azimuth, 0-360 deg, 0=north) from one grid locator toward another. */
+export function gridBearingDeg(fromGrid: string, toGrid: string): number {
+  const a = gridToLatLon(fromGrid);
+  const b = gridToLatLon(toGrid);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const dLon = toRad(b.lon - a.lon);
+
+  const y = Math.sin(dLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+  const bearing = (Math.atan2(y, x) * 180) / Math.PI;
+  return (bearing + 360) % 360;
+}
+
 /** Approximate local solar hour angle (0-24) for a longitude at a given UTC time, used to model day/night propagation. */
 export function localSolarHour(lon: number, utcMs: number): number {
   const utcHours = (utcMs / 3_600_000) % 24;

@@ -1,12 +1,16 @@
-import { BANDS, type Band, type FilterWidth, type Mode, type StationInfo } from "@koden/shared";
+import { ANTENNAS, BANDS, antennaById, type AntennaId, type Band, type FilterWidth, type Mode, type StationInfo } from "@koden/shared";
 import type { AgcMode, ReceiveParams } from "../audio/engine.js";
 import type { TuneStep } from "../App.js";
+import { click } from "../audio/sfx.js";
 import { SMeter } from "./SMeter.js";
 import { SwrBar } from "./SwrBar.js";
 import { Waterfall } from "./Waterfall.js";
 import { VfoDial } from "./VfoDial.js";
 import { Knob } from "./Knob.js";
 import { PanelButton } from "./PanelButton.js";
+import { RotatorCompass } from "./RotatorCompass.js";
+import { AntennaMap } from "./AntennaMap.js";
+import { SetupPanel } from "./SetupPanel.js";
 
 interface VfoDisplay {
   freqKHz: number;
@@ -27,10 +31,30 @@ interface RadioPanelProps {
   tunerActive: boolean;
   swr: number;
   onTuner: () => void;
-  ant: "ANT1" | "ANT2";
-  onToggleAnt: () => void;
   moniEnabled: boolean;
   onToggleMoni: () => void;
+
+  antenna: AntennaId;
+  onSelectAntenna: (id: AntennaId) => void;
+  heading: number;
+  onChangeHeading: (deg: number) => void;
+  ownGrid: string;
+  onPointAt: (grid: string) => void;
+
+  pttHeld: boolean;
+  onPttDown: () => void;
+  onPttUp: () => void;
+
+  micDevices: MediaDeviceInfo[];
+  speakerDevices: MediaDeviceInfo[];
+  selectedMicId: string;
+  onSelectMic: (id: string) => void;
+  selectedSpeakerId: string;
+  onSelectSpeaker: (id: string) => void;
+  speakerSelectionSupported: boolean;
+  sfxEnabled: boolean;
+  onToggleSfx: () => void;
+  onSaveProfile: (callsign: string, grid: string) => void;
 
   vfoA: VfoDisplay;
   vfoB: VfoDisplay;
@@ -136,10 +160,27 @@ export function RadioPanel(props: RadioPanelProps) {
     tunerActive,
     swr,
     onTuner,
-    ant,
-    onToggleAnt,
     moniEnabled,
     onToggleMoni,
+    antenna,
+    onSelectAntenna,
+    heading,
+    onChangeHeading,
+    ownGrid,
+    onPointAt,
+    pttHeld,
+    onPttDown,
+    onPttUp,
+    micDevices,
+    speakerDevices,
+    selectedMicId,
+    onSelectMic,
+    selectedSpeakerId,
+    onSelectSpeaker,
+    speakerSelectionSupported,
+    sfxEnabled,
+    onToggleSfx,
+    onSaveProfile,
     vfoA,
     vfoB,
     activeVfo,
@@ -215,6 +256,10 @@ export function RadioPanel(props: RadioPanelProps) {
   const otherVfo = activeVfo === "A" ? vfoB : vfoA;
   const audibleSet = new Set(audibleStationIds);
   const filterLabel = filterWidth === "narrow" ? "NAR" : filterWidth === "normal" ? "MID" : "WIDE";
+  const antennaMeta = antennaById(antenna);
+  const antennaLabel = antennaMeta
+    ? `${antennaMeta.name}${antennaMeta.rotatable ? ` ${Math.round(heading).toString().padStart(3, "0")}°` : ""}`
+    : antenna;
 
   return (
     <div className={`panel ${dim ? "panel--dim" : ""}`}>
@@ -222,10 +267,22 @@ export function RadioPanel(props: RadioPanelProps) {
         <div className="panel__quick-col">
           <PanelButton label="POWER" onClick={onPowerOff} title="Power off and disconnect" />
           <PanelButton label="TUNER" active={tunerActive} onClick={onTuner} title="Run the antenna tuner" />
-          <PanelButton label={ant} onClick={onToggleAnt} title="Switch antenna" />
           <PanelButton label="MONI" active={moniEnabled} onClick={onToggleMoni} title="Monitor/sidetone" />
           <PanelButton label="VOX" active={vox} onClick={onToggleVox} title="Voice-activated transmit" />
           <PanelButton label="MOX" active={mox} onClick={onToggleMox} title="Manual transmit (push-to-talk toggle)" />
+          <button
+            className={`panel-btn panel-btn--ptt ${pttHeld ? "panel-btn--active" : ""}`}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              click();
+              onPttDown();
+            }}
+            onPointerUp={onPttUp}
+            onPointerLeave={() => pttHeld && onPttUp()}
+            title="Push and hold to transmit"
+          >
+            PTT
+          </button>
         </div>
 
         <div className="panel__dual-display">
@@ -257,7 +314,7 @@ export function RadioPanel(props: RadioPanelProps) {
               <span>R.FLT {filterLabel}</span>
               <span>M.CH {memIndex}</span>
               <span>{split ? "SPLIT" : ""}</span>
-              <span>{ant}</span>
+              <span>{antennaLabel}</span>
             </div>
           </div>
         </div>
@@ -297,12 +354,28 @@ export function RadioPanel(props: RadioPanelProps) {
           <button className="panel__overlay-close" onClick={onCloseMenu} title="Close">
             ×
           </button>
-          Connected to <code>{callsign}</code>&apos;s session on a multiplayer HF propagation
-          simulator. Drag knobs vertically (or scroll) to adjust. MOX toggles transmit on/off; VOX
-          keys automatically when you speak. RIT offsets your receive frequency, XIT offsets your
-          transmit frequency; SPLIT transmits on the other VFO. TUNER runs a simulated antenna
-          match. Static, QSB fading, meteor scatter, and band conditions are computed server-side
-          and are unique to every listener.
+          <div className="panel__overlay-intro">
+            Connected to <code>{callsign}</code>&apos;s session on a multiplayer HF propagation
+            simulator. Drag knobs vertically (or scroll) to adjust. MOX toggles transmit on/off; VOX
+            keys automatically when you speak, and PTT transmits only while held. RIT offsets your
+            receive frequency, XIT offsets your transmit frequency; SPLIT transmits on the other VFO.
+            TUNER runs a simulated antenna match. Static, QSB fading, meteor scatter, and band
+            conditions are computed server-side and are unique to every listener.
+          </div>
+          <SetupPanel
+            callsign={callsign}
+            grid={ownGrid}
+            onSaveProfile={onSaveProfile}
+            micDevices={micDevices}
+            speakerDevices={speakerDevices}
+            selectedMicId={selectedMicId}
+            onSelectMic={onSelectMic}
+            selectedSpeakerId={selectedSpeakerId}
+            onSelectSpeaker={onSelectSpeaker}
+            speakerSelectionSupported={speakerSelectionSupported}
+            sfxEnabled={sfxEnabled}
+            onToggleSfx={onToggleSfx}
+          />
         </div>
       )}
 
@@ -419,6 +492,23 @@ export function RadioPanel(props: RadioPanelProps) {
             <Knob label="SQL" value={rx.squelch} min={0} max={10} onChange={(v) => onUpdateRx({ squelch: v })} />
           </div>
         </div>
+
+        <div className="panel__antenna-col">
+          <div className="button-group__label">ANTENNA</div>
+          <div className="antenna-grid">
+            {ANTENNAS.map((a) => (
+              <PanelButton
+                key={a.id}
+                small
+                label={a.name}
+                active={antenna === a.id}
+                onClick={() => onSelectAntenna(a.id)}
+                title={a.description}
+              />
+            ))}
+          </div>
+          <RotatorCompass headingDeg={heading} onChangeHeading={onChangeHeading} disabled={!antennaMeta?.rotatable} />
+        </div>
       </div>
 
       <div className="panel__monitor-bay">
@@ -453,6 +543,17 @@ export function RadioPanel(props: RadioPanelProps) {
               <li key={i}>{e}</li>
             ))}
           </ul>
+        </div>
+        <div className="panel__side-info panel__side-info--map">
+          <div className="panel__roster-title">STATION MAP{antennaMeta?.rotatable ? " · click to point beam" : ""}</div>
+          <AntennaMap
+            ownGrid={ownGrid}
+            roster={roster}
+            ownId={ownId}
+            headingDeg={heading}
+            showHeading={!!antennaMeta?.rotatable}
+            onPointAt={onPointAt}
+          />
         </div>
       </div>
 

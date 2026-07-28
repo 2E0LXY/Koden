@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   findBand,
+  antennaById,
+  gridBearingDeg,
+  isValidGrid,
+  type AntennaId,
   type Band,
   type FilterWidth,
   type Mode,
@@ -8,13 +12,15 @@ import {
 } from "@koden/shared";
 import { KodenSocket, type ConnectionStatus } from "./net/wsClient.js";
 import { AudioEngine, type AgcMode, type ReceiveParams } from "./audio/engine.js";
-import { beep, detent, power, relay, squelchTail } from "./audio/sfx.js";
+import { beep, detent, power, relay, setSfxEnabled, squelchTail } from "./audio/sfx.js";
 import { JoinForm } from "./ui/JoinForm.js";
 import { RadioPanel } from "./ui/RadioPanel.js";
 
 const WS_URL = import.meta.env.VITE_SERVER_WS_URL ?? "ws://localhost:8787/ws";
 const MAX_EVENTS = 12;
 const VOX_THRESHOLD = 0.02;
+const SPEAKER_SELECTION_SUPPORTED =
+  typeof AudioContext !== "undefined" && "setSinkId" in AudioContext.prototype;
 
 interface VfoState {
   freqKHz: number;
@@ -56,6 +62,20 @@ export function App() {
   const [callsign, setCallsign] = useState("");
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("closed");
   const [ownId, setOwnId] = useState<string | null>(null);
+  const [savedCallsign] = useState(() => {
+    try {
+      return localStorage.getItem("koden.callsign") ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const [savedGrid] = useState(() => {
+    try {
+      return localStorage.getItem("koden.grid") ?? "";
+    } catch {
+      return "";
+    }
+  });
 
   const [vfoA, setVfoA] = useState<VfoState>({ freqKHz: 14195.0, mode: "USB" });
   const [vfoB, setVfoB] = useState<VfoState>({ freqKHz: 14200.0, mode: "USB" });
@@ -94,7 +114,17 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [tunerActive, setTunerActive] = useState(false);
   const [swr, setSwr] = useState(2.8);
-  const [ant, setAnt] = useState<"ANT1" | "ANT2">("ANT1");
+
+  const [antenna, setAntennaState] = useState<AntennaId>("dipole");
+  const [heading, setHeadingState] = useState(0);
+  const [ownGrid, setOwnGrid] = useState("");
+  const [pttHeld, setPttHeld] = useState(false);
+
+  const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
+  const [speakerDevices, setSpeakerDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedMicId, setSelectedMicId] = useState("");
+  const [selectedSpeakerId, setSelectedSpeakerId] = useState("");
+  const [sfxEnabled, setSfxEnabledState] = useState(true);
 
   const [scanning, setScanning] = useState(false);
 
@@ -106,7 +136,7 @@ export function App() {
   const audioEngineRef = useRef<AudioEngine | null>(null);
   const pttRef = useRef(false);
   const squelchOpenRef = useRef(true);
-  const transmitting = mox || (vox && voxActive);
+  const transmitting = mox || pttHeld || (vox && voxActive);
 
   const activeVfoState = activeVfo === "A" ? vfoA : vfoB;
   const setActiveVfoState = useCallback(
@@ -125,8 +155,30 @@ export function App() {
     setEvents((prev) => [message, ...prev].slice(0, MAX_EVENTS));
   }, []);
 
+  const refreshDevices = useCallback(async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setMicDevices(devices.filter((d) => d.kind === "audioinput"));
+      setSpeakerDevices(devices.filter((d) => d.kind === "audiooutput"));
+    } catch {
+      // Devices unavailable (no permission yet, or unsupported); leave lists empty.
+    }
+  }, []);
+
+  useEffect(() => {
+    navigator.mediaDevices.addEventListener("devicechange", refreshDevices);
+    return () => navigator.mediaDevices.removeEventListener("devicechange", refreshDevices);
+  }, [refreshDevices]);
+
   const handleJoin = useCallback(async (callsignInput: string, gridInput: string) => {
     setCallsign(callsignInput);
+    setOwnGrid(gridInput);
+    try {
+      localStorage.setItem("koden.callsign", callsignInput);
+      localStorage.setItem("koden.grid", gridInput);
+    } catch {
+      // localStorage unavailable (private browsing etc.) -- not essential.
+    }
     power(true);
 
     const audioEngine = new AudioEngine();
@@ -153,10 +205,12 @@ export function App() {
               txFreqKHz: 14195.0,
               filterWidth: "normal",
             });
+            socket.send({ type: "antenna", antenna: "dipole", headingDeg: 0 });
             audioEngine
               .startCapture((frame) => {
                 if (pttRef.current) socket.sendAudioFrame(frame);
               })
+              .then(refreshDevices)
               .catch((err) => {
                 logEvent(`Microphone error: ${String(err)}`);
               });
@@ -180,7 +234,7 @@ export function App() {
     socketRef.current = socket;
     socket.connect();
     setJoined(true);
-  }, [logEvent]);
+  }, [logEvent, refreshDevices]);
 
   // Push VFO/mode/RIT/XIT/split/filter changes to the server whenever they change.
   useEffect(() => {
@@ -193,6 +247,12 @@ export function App() {
       filterWidth,
     });
   }, [joined, listenFreqKHz, activeVfoState.mode, txFreqKHz, filterWidth]);
+
+  // Push antenna type/heading changes to the server whenever they change.
+  useEffect(() => {
+    if (!joined) return;
+    socketRef.current?.send({ type: "antenna", antenna, headingDeg: heading });
+  }, [joined, antenna, heading]);
 
   useEffect(() => {
     audioEngineRef.current?.updateReceiveParams(rx);
@@ -428,6 +488,72 @@ export function App() {
     setRx((prev) => ({ ...prev, ...partial }));
   }, []);
 
+  const onSelectAntenna = useCallback((id: AntennaId) => {
+    setAntennaState(id);
+    beep(750, 60);
+  }, []);
+
+  const onChangeHeading = useCallback((deg: number) => {
+    setHeadingState(((deg % 360) + 360) % 360);
+  }, []);
+
+  /** Slew the rotator to point at another station on the map, if the current antenna is a beam. */
+  const onPointAt = useCallback(
+    (targetGrid: string) => {
+      const ant = antennaById(antenna);
+      if (!ant?.rotatable || !isValidGrid(ownGrid) || !isValidGrid(targetGrid)) return;
+      setHeadingState(Math.round(gridBearingDeg(ownGrid, targetGrid)));
+      detent();
+    },
+    [antenna, ownGrid],
+  );
+
+  const onPttDown = useCallback(() => setPttHeld(true), []);
+  const onPttUp = useCallback(() => setPttHeld(false), []);
+
+  const onSelectMic = useCallback((deviceId: string) => {
+    setSelectedMicId(deviceId);
+    audioEngineRef.current
+      ?.switchMicrophone(deviceId)
+      .then(refreshDevices)
+      .catch((err) => logEvent(`Microphone switch failed: ${String(err)}`));
+  }, [refreshDevices, logEvent]);
+
+  const onSelectSpeaker = useCallback((deviceId: string) => {
+    setSelectedSpeakerId(deviceId);
+    audioEngineRef.current?.setOutputDevice(deviceId).catch(() => {
+      logEvent("Speaker selection failed for that device.");
+    });
+  }, [logEvent]);
+
+  const onToggleSfx = useCallback(() => {
+    setSfxEnabledState((prev) => {
+      const next = !prev;
+      setSfxEnabled(next);
+      return next;
+    });
+  }, []);
+
+  const onSaveProfile = useCallback(
+    (newCallsign: string, newGrid: string) => {
+      if (!newCallsign || !isValidGrid(newGrid)) {
+        logEvent("Setup: enter a callsign and a valid grid locator.");
+        return;
+      }
+      setCallsign(newCallsign);
+      setOwnGrid(newGrid);
+      socketRef.current?.send({ type: "profile", callsign: newCallsign, grid: newGrid });
+      try {
+        localStorage.setItem("koden.callsign", newCallsign);
+        localStorage.setItem("koden.grid", newGrid);
+      } catch {
+        // localStorage unavailable -- not essential.
+      }
+      beep(1000, 80);
+    },
+    [logEvent],
+  );
+
   const handlePowerOff = useCallback(() => {
     power(false);
     audioEngineRef.current?.stopCapture();
@@ -442,7 +568,7 @@ export function App() {
   }, []);
 
   if (!joined) {
-    return <JoinForm onJoin={handleJoin} />;
+    return <JoinForm onJoin={handleJoin} defaultCallsign={savedCallsign} defaultGrid={savedGrid} />;
   }
 
   return (
@@ -460,11 +586,25 @@ export function App() {
       tunerActive={tunerActive}
       swr={swr}
       onTuner={onTuner}
-      ant={ant}
-      onToggleAnt={() => {
-        setAnt((a) => (a === "ANT1" ? "ANT2" : "ANT1"));
-        relay(true);
-      }}
+      antenna={antenna}
+      onSelectAntenna={onSelectAntenna}
+      heading={heading}
+      onChangeHeading={onChangeHeading}
+      ownGrid={ownGrid}
+      onPointAt={onPointAt}
+      pttHeld={pttHeld}
+      onPttDown={onPttDown}
+      onPttUp={onPttUp}
+      micDevices={micDevices}
+      speakerDevices={speakerDevices}
+      selectedMicId={selectedMicId}
+      onSelectMic={onSelectMic}
+      selectedSpeakerId={selectedSpeakerId}
+      onSelectSpeaker={onSelectSpeaker}
+      speakerSelectionSupported={SPEAKER_SELECTION_SUPPORTED}
+      sfxEnabled={sfxEnabled}
+      onToggleSfx={onToggleSfx}
+      onSaveProfile={onSaveProfile}
       moniEnabled={moniEnabled}
       onToggleMoni={() => setMoniEnabled((s) => !s)}
       vfoA={vfoA}

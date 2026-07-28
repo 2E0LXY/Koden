@@ -1,8 +1,13 @@
 import {
+  type AntennaId,
   type Band,
   type FilterWidth,
   type Mode,
+  DEFAULT_ANTENNA,
+  antennaById,
+  antennaGainDb,
   daylightFactor,
+  gridBearingDeg,
   gridDistanceKm,
   gridToLatLon,
   localSolarHour,
@@ -46,6 +51,10 @@ export interface PropagationInput {
   rxMode: Mode;
   rxFilterWidth: FilterWidth;
   band: Band;
+  txAntenna: AntennaId;
+  txHeadingDeg: number;
+  rxAntenna: AntennaId;
+  rxHeadingDeg: number;
 }
 
 export interface PropagationResult {
@@ -184,8 +193,26 @@ export class PropagationEngine {
       justStarted: meteorScatterJustStarted,
     } = meteor.step(dtMs, meteorChancePerSecond);
 
+    // Directional antenna gain: how much each end's antenna actually favors
+    // the bearing toward the other station, given where it's pointed.
+    // Omnidirectional types (wire antennas, verticals) ignore heading
+    // entirely and just contribute their flat gain.
+    const txAntenna = antennaById(input.txAntenna) ?? antennaById(DEFAULT_ANTENNA)!;
+    const rxAntenna = antennaById(input.rxAntenna) ?? antennaById(DEFAULT_ANTENNA)!;
+    const bearingTxToRx = gridBearingDeg(input.txGrid, input.rxGrid);
+    const bearingRxToTx = gridBearingDeg(input.rxGrid, input.txGrid);
+    const txAntennaGainDb = antennaGainDb(txAntenna, input.txHeadingDeg, bearingTxToRx);
+    const rxAntennaGainDb = antennaGainDb(rxAntenna, input.rxHeadingDeg, bearingRxToTx);
+
     const signalDb =
-      pathLossDb - dayAbsorptionPenalty + nightBonus + skipBonus + fadeDb + meteorBoostDb;
+      pathLossDb -
+      dayAbsorptionPenalty +
+      nightBonus +
+      skipBonus +
+      fadeDb +
+      meteorBoostDb +
+      txAntennaGainDb +
+      rxAntennaGainDb;
 
     return { inPassband: true, signalDb, meteorScatterActive, meteorScatterJustStarted };
   }

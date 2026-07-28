@@ -4,8 +4,15 @@
  * and noise bursts so every physical control feels like it "clicks".
  */
 let ctx: AudioContext | null = null;
+let enabled = true;
 
-function getCtx(): AudioContext {
+/** Global on/off switch for all synthesized UI sounds (from the setup panel). */
+export function setSfxEnabled(value: boolean): void {
+  enabled = value;
+}
+
+function getCtx(): AudioContext | null {
+  if (!enabled) return null;
   if (!ctx) ctx = new AudioContext();
   if (ctx.state === "suspended") void ctx.resume();
   return ctx;
@@ -33,6 +40,7 @@ function noiseBurst(c: AudioContext, durationSec: number): AudioBufferSourceNode
 /** A crisp mechanical button click. */
 export function click(): void {
   const c = getCtx();
+  if (!c) return;
   const src = noiseBurst(c, 0.02);
   const filter = c.createBiquadFilter();
   filter.type = "highpass";
@@ -46,6 +54,7 @@ export function click(): void {
 /** A short confirmation beep, e.g. for mode/band changes. */
 export function beep(freq = 880, durationMs = 90): void {
   const c = getCtx();
+  if (!c) return;
   const osc = c.createOscillator();
   osc.type = "sine";
   osc.frequency.value = freq;
@@ -58,6 +67,7 @@ export function beep(freq = 880, durationMs = 90): void {
 /** A relay "clunk" for engaging/disengaging transmit. */
 export function relay(engage: boolean): void {
   const c = getCtx();
+  if (!c) return;
   const src = noiseBurst(c, 0.03);
   const filter = c.createBiquadFilter();
   filter.type = "bandpass";
@@ -72,6 +82,7 @@ export function relay(engage: boolean): void {
 /** Power on/off sweep. */
 export function power(on: boolean): void {
   const c = getCtx();
+  if (!c) return;
   const osc = c.createOscillator();
   osc.type = "sine";
   const t0 = c.currentTime;
@@ -91,6 +102,7 @@ export function power(on: boolean): void {
 /** The characteristic "thump" when squelch opens or closes on a noisy channel. */
 export function squelchTail(): void {
   const c = getCtx();
+  if (!c) return;
   const src = noiseBurst(c, 0.08);
   const filter = c.createBiquadFilter();
   filter.type = "bandpass";
@@ -105,6 +117,7 @@ export function squelchTail(): void {
 /** Detent tick for rotary knobs while dragging. */
 export function detent(): void {
   const c = getCtx();
+  if (!c) return;
   const osc = c.createOscillator();
   osc.type = "square";
   osc.frequency.value = 1800;

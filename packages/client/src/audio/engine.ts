@@ -99,6 +99,9 @@ export class AudioEngine {
   private monitorGain: GainNode | null = null;
   private moniLevel = 0;
   private moniEnabled = false;
+  private currentCompLevel = 0;
+  private currentMicGain = 5;
+  private currentTxPower = 10;
 
   private params: ReceiveParams = { ...DEFAULT_RECEIVE_PARAMS };
 
@@ -177,8 +180,8 @@ export class AudioEngine {
     this.playbackNode?.port.postMessage(frame, [frame]);
   }
 
-  /** Start capturing the mic. `onFrame` is invoked with each encoded 20ms PCM frame regardless of transmit state; the caller decides whether to actually send it. */
-  async startCapture(onFrame: (frame: ArrayBuffer) => void): Promise<void> {
+/** Start capturing the mic. `onFrame` is invoked with each encoded 20ms PCM frame regardless of transmit state; the caller decides whether to actually send it. `deviceId` selects a specific input device (see enumerateDevices). */
+  async startCapture(onFrame: (frame: ArrayBuffer) => void, deviceId?: string): Promise<void> {
     if (!this.context) throw new Error("AudioEngine not initialized");
     const context = this.context;
     this.onFrame = onFrame;
@@ -188,6 +191,7 @@ export class AudioEngine {
         noiseSuppression: false,
         autoGainControl: true,
         channelCount: 1,
+        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
       },
     });
     const source = context.createMediaStreamSource(this.micStream);
@@ -223,9 +227,26 @@ export class AudioEngine {
     this.monitorGain.connect(context.destination);
 
     this.captureNode = captureNode;
-    this.setCompLevel(0);
-    this.setMicGain(5);
-    this.setTxPower(10);
+    // Re-apply whatever the operator already had dialed in, rather than
+    // resetting to defaults (important when switching microphones mid-session).
+    this.setCompLevel(this.currentCompLevel);
+    this.setMicGain(this.currentMicGain);
+    this.setTxPower(this.currentTxPower);
+  }
+
+  /** Switch to a different input device without losing the current onFrame callback or DSP settings. */
+  async switchMicrophone(deviceId: string): Promise<void> {
+    const cb = this.onFrame;
+    this.stopCapture();
+    if (cb) await this.startCapture(cb, deviceId);
+  }
+
+  /** Route playback to a specific output device, where the browser supports AudioContext.setSinkId. Returns false if unsupported. */
+  async setOutputDevice(deviceId: string): Promise<boolean> {
+    const ctx = this.context as AudioContext & { setSinkId?: (id: string) => Promise<void> };
+    if (!ctx || typeof ctx.setSinkId !== "function") return false;
+    await ctx.setSinkId(deviceId);
+    return true;
   }
 
   stopCapture(): void {
@@ -261,6 +282,7 @@ export class AudioEngine {
   }
 
   setCompLevel(level: number): void {
+    this.currentCompLevel = level;
     if (!this.compCompressor) return;
     const t = level / 10;
     this.compCompressor.threshold.value = -20 - t * 25;
@@ -268,11 +290,13 @@ export class AudioEngine {
   }
 
   setMicGain(level: number): void {
+    this.currentMicGain = level;
     if (!this.micGainNode) return;
     this.micGainNode.gain.value = 0.2 + (level / 10) * 2.8;
   }
 
   setTxPower(level: number): void {
+    this.currentTxPower = level;
     if (!this.txGainNode) return;
     this.txGainNode.gain.value = 0.4 + (level / 10) * 0.9;
   }
