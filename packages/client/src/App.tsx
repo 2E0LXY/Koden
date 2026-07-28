@@ -93,6 +93,7 @@ export function App() {
   const [mScope, setMScope] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [tunerActive, setTunerActive] = useState(false);
+  const [swr, setSwr] = useState(2.8);
   const [ant, setAnt] = useState<"ANT1" | "ANT2">("ANT1");
 
   const [scanning, setScanning] = useState(false);
@@ -366,6 +367,9 @@ export function App() {
   const onBandSelect = useCallback(
     (b: Band) => {
       setActiveVfoState({ freqKHz: b.rangeKHz[0] + 50, mode: b.defaultMode });
+      // A real antenna's match is frequency-dependent, so hopping bands
+      // knocks the SWR back out of tune until the tuner is re-run.
+      setSwr(1.8 + Math.random() * 2.7);
       beep(900, 70);
     },
     [setActiveVfoState],
@@ -393,14 +397,31 @@ export function App() {
     logEvent("ATU: searching for match...");
     relay(true);
     audioEngineRef.current?.setSquelchOpen(false);
-    const t1 = window.setTimeout(() => detent(), 200);
-    const t2 = window.setTimeout(() => detent(), 400);
-    const t3 = window.setTimeout(() => relay(false), 900);
-    const t4 = window.setTimeout(() => {
+
+    // Sweep the SWR through a jittery search (relays clicking through L/C
+    // combinations) before settling on a good match, like a real ATU.
+    const finalSwr = 1.05 + Math.random() * 0.25;
+    const sweep: { atMs: number; value: number }[] = [
+      { atMs: 150, value: 2.4 + Math.random() * 1.6 },
+      { atMs: 350, value: 1.9 + Math.random() * 1.3 },
+      { atMs: 550, value: 3.0 + Math.random() * 1.5 },
+      { atMs: 750, value: 1.4 + Math.random() * 0.7 },
+      { atMs: 950, value: finalSwr + 0.2 + Math.random() * 0.3 },
+    ];
+    const timeouts = sweep.map(({ atMs, value }) =>
+      window.setTimeout(() => {
+        setSwr(value);
+        detent();
+      }, atMs),
+    );
+    const relayOff = window.setTimeout(() => relay(false), 900);
+    const done = window.setTimeout(() => {
+      setSwr(finalSwr);
       setTunerActive(false);
-      logEvent(`ATU: match found, SWR 1.1:1 on ${band?.name ?? "current band"}`);
+      logEvent(`ATU: match found, SWR ${finalSwr.toFixed(1)}:1 on ${band?.name ?? "current band"}`);
     }, 1200);
-    return () => [t1, t2, t3, t4].forEach(window.clearTimeout);
+
+    return () => [...timeouts, relayOff, done].forEach(window.clearTimeout);
   }, [tunerActive, band, logEvent]);
 
   const updateRx = useCallback((partial: Partial<ReceiveParams>) => {
@@ -437,6 +458,7 @@ export function App() {
       onToggleMenu={() => setMenuOpen((s) => !s)}
       onCloseMenu={() => setMenuOpen(false)}
       tunerActive={tunerActive}
+      swr={swr}
       onTuner={onTuner}
       ant={ant}
       onToggleAnt={() => {

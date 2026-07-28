@@ -154,10 +154,20 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
 
+# Let's Encrypt cannot issue a certificate for a bare IP address, only for
+# a real hostname -- so only fall back to a self-signed cert when ADDR is
+# literally an IPv4/IPv6 address. If ADDR is any kind of hostname (a real
+# domain, or a free "resolves to this IP" service like sslip.io/nip.io),
+# Caddy's default automatic HTTPS gets you a real, trusted certificate.
+TLS_DIRECTIVE=""
+if [[ "$ADDR" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || [[ "$ADDR" == *:* ]]; then
+  TLS_DIRECTIVE="tls internal"
+fi
+
 log "Writing Caddyfile"
 cat > /etc/caddy/Caddyfile <<EOF
 ${ADDR} {
-	tls internal
+	${TLS_DIRECTIVE}
 
 	handle /ws {
 		reverse_proxy 127.0.0.1:${NODE_PORT}

@@ -160,6 +160,45 @@ button {
 .panel__scope-display .waterfall canvas {
   height: 70px;
 }
+.swr-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.swr-bar__label {
+  font-size: 9px;
+  color: #a98a3f;
+  letter-spacing: 1px;
+  text-align: center;
+  font-family: "Courier New", monospace;
+}
+.swr-bar__track {
+  width: 100%;
+  height: 6px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.swr-bar__fill {
+  height: 100%;
+  transition: width 0.15s ease, background 0.15s ease;
+}
+.swr-bar--tuning .swr-bar__fill {
+  animation: swr-pulse 0.3s ease-in-out infinite alternate;
+}
+.swr-bar--tuning .swr-bar__label {
+  color: #ff8a3a;
+}
+@keyframes swr-pulse {
+  from {
+    opacity: 0.65;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .panel__scope-display--big .waterfall canvas {
   height: 160px;
 }

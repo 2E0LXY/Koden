@@ -2,6 +2,7 @@ import { BANDS, type Band, type FilterWidth, type Mode, type StationInfo } from 
 import type { AgcMode, ReceiveParams } from "../audio/engine.js";
 import type { TuneStep } from "../App.js";
 import { SMeter } from "./SMeter.js";
+import { SwrBar } from "./SwrBar.js";
 import { Waterfall } from "./Waterfall.js";
 import { VfoDial } from "./VfoDial.js";
 import { Knob } from "./Knob.js";
@@ -24,6 +25,7 @@ interface RadioPanelProps {
   onToggleMenu: () => void;
   onCloseMenu: () => void;
   tunerActive: boolean;
+  swr: number;
   onTuner: () => void;
   ant: "ANT1" | "ANT2";
   onToggleAnt: () => void;
@@ -132,6 +134,7 @@ export function RadioPanel(props: RadioPanelProps) {
     onToggleMenu,
     onCloseMenu,
     tunerActive,
+    swr,
     onTuner,
     ant,
     onToggleAnt,
@@ -228,6 +231,7 @@ export function RadioPanel(props: RadioPanelProps) {
         <div className="panel__dual-display">
           <div className={`panel__scope-display ${mScope ? "panel__scope-display--big" : ""}`}>
             <SMeter signalDb={signalDb} />
+            <SwrBar swr={swr} tuning={tunerActive} />
             <Waterfall signalDb={signalDb} active={transmitting} />
           </div>
 
