@@ -111,7 +111,7 @@ button {
 .panel__top {
   display: flex;
   gap: 16px;
-  align-items: stretch;
+  align-items: flex-start;
 }
 
 .panel__quick-col {
