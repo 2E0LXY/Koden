@@ -330,13 +330,23 @@ button {
 .panel__body {
   display: flex;
   gap: 18px;
-  align-items: flex-start;
+  align-items: stretch;
   flex-wrap: wrap;
+}
+
+.panel__knob-col,
+.panel__center-col,
+.panel__right-col {
+  background: #101013;
+  border: 1px solid #2a2a2e;
+  border-radius: 8px;
+  padding: 14px;
 }
 
 .panel__knob-col {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 14px;
   width: 260px;
 }
@@ -352,6 +362,7 @@ button {
   min-width: 460px;
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 12px;
 }
 
