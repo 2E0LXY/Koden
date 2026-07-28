@@ -86,6 +86,10 @@ if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
 fi
 
 log "Fetching Koden ($REPO_REF) into $INSTALL_DIR"
+# Re-running this script sees a directory chown'd to $SERVICE_USER (below)
+# rather than root, which git's ownership check refuses to touch by
+# default. This script only ever runs as root (checked above), so trust it.
+git config --global --add safe.directory "$INSTALL_DIR"
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   git -C "$INSTALL_DIR" fetch --depth 1 origin "$REPO_REF"
   git -C "$INSTALL_DIR" checkout -f FETCH_HEAD
