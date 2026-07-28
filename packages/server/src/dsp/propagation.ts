@@ -151,13 +151,17 @@ export class PropagationEngine {
     const pathLossDb = -18 * Math.log10(1 + distanceKm / 40);
 
     // Low bands (160/80/40) suffer daytime D-layer absorption but open up
-    // for DX at night. High bands (15/12/10/6) need daylight + a healthy
-    // solar flux to support long skip, and are close to dead at night
-    // without a meteor scatter assist.
+    // for DX at night. High bands (15/12/10/6) need daylight to support
+    // long skip, and are close to dead at night without a meteor scatter
+    // assist. The real day/night cycle (avgDaylight, driven by each
+    // station's actual local time) is the dominant term; the compressed
+    // solar-flux index only nudges the daytime skip bonus up or down a
+    // little, so a band's fate is never flipped purely by the fast flux
+    // cycle -- only by whether it's actually day or night.
     const nightBonus = band.nighttimeDx * (1 - avgDaylight) * 14;
     const dayAbsorptionPenalty = band.daytimeAbsorption * avgDaylight * 10;
     const highBandDaylightNeed = band.meteorScatterProne ? 1 : 1 - band.daytimeAbsorption;
-    const skipBonus = highBandDaylightNeed * avgDaylight * (flux - 0.35) * 24;
+    const skipBonus = highBandDaylightNeed * avgDaylight * (4 + (flux - 0.35) * 10);
 
     let fade = this.fades.get(key);
     if (!fade) {

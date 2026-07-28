@@ -3,16 +3,21 @@ import {
   FRAME_SAMPLES,
   type Band,
   type ServerMessage,
+  daylightFactor,
   findBand,
+  gridToLatLon,
+  localSolarHour,
 } from "@koden/shared";
 import type { Station } from "../stationManager.js";
 import { StationManager } from "../stationManager.js";
 import { PropagationEngine } from "./propagation.js";
-import { BandNoiseGenerator, dbToLinear } from "./noise.js";
+import { BandNoiseGenerator, dbToLinear, modeNoiseGainDb } from "./noise.js";
 import { int16ToFloat32, float32ToInt16 } from "./pcm.js";
 
 const AUDIBLE_THRESHOLD_DB = -38;
 const METER_EVERY_N_TICKS = 4;
+/** dB above threshold at which FM's capture effect has essentially silenced the background noise. */
+const FM_CAPTURE_RANGE_DB = 26;
 
 interface RxNoiseState {
   bandId: string;
@@ -37,8 +42,10 @@ export class MixerEngine {
 
   private getNoiseGenerator(rx: Station, band: Band): BandNoiseGenerator {
     const existing = this.noiseByStation.get(rx.id);
-    if (existing && existing.bandId === band.id) return existing.generator;
-    const generator = new BandNoiseGenerator(band, this.sampleRate);
+    if (existing && existing.bandId === band.id && existing.generator.matches(rx.mode)) {
+      return existing.generator;
+    }
+    const generator = new BandNoiseGenerator(band, this.sampleRate, rx.mode, rx.filterWidth);
     this.noiseByStation.set(rx.id, { bandId: band.id, generator });
     return generator;
   }
@@ -95,9 +102,30 @@ export class MixerEngine {
         for (let i = 0; i < output.length; i++) output[i] += scratch[i] * gain;
       }
 
+      // Real receiver noise power scales with passband bandwidth (a narrow
+      // CW filter admits far less noise than a wide FM filter), and low-band
+      // atmospheric static (QRN) gets noticeably worse at night once the
+      // D-layer stops absorbing distant thunderstorm crashes.
+      const rxLoc = gridToLatLon(rx.grid);
+      const rxDaylight = daylightFactor(localSolarHour(rxLoc.lon, nowMs));
+      const nightQrnBoostDb = rxBand.daytimeAbsorption * (1 - rxDaylight) * 6;
+      const crackleRateMultiplier = 1 + rxBand.daytimeAbsorption * (1 - rxDaylight) * 0.8;
+
       const noiseGen = this.getNoiseGenerator(rx, rxBand);
-      const noiseFrame = noiseGen.generate(FRAME_SAMPLES, rxBand.baseNoiseFloorDb);
-      for (let i = 0; i < output.length; i++) output[i] += noiseFrame[i];
+      const effectiveNoiseFloorDb =
+        rxBand.baseNoiseFloorDb + modeNoiseGainDb(rx.mode, rx.filterWidth) + nightQrnBoostDb;
+      const noiseFrame = noiseGen.generate(FRAME_SAMPLES, effectiveNoiseFloorDb, crackleRateMultiplier);
+
+      // FM's capture effect: once a signal is comfortably above the noise
+      // floor, an FM detector locks on and background noise all but
+      // disappears -- unlike AM/SSB/CW, where noise stays additive
+      // regardless of signal strength.
+      let noiseGain = 1;
+      if (rx.mode === "FM" && peakSignalDb !== -Infinity) {
+        const above = peakSignalDb - AUDIBLE_THRESHOLD_DB;
+        noiseGain = Math.max(0.04, 1 - above / FM_CAPTURE_RANGE_DB);
+      }
+      for (let i = 0; i < output.length; i++) output[i] += noiseFrame[i] * noiseGain;
 
       const outInt16 = float32ToInt16(output);
       if (rx.ws.readyState === WebSocket.OPEN) {
@@ -108,7 +136,7 @@ export class MixerEngine {
         this.send(rx.ws, {
           type: "meter",
           sMeterDb: peakSignalDb === -Infinity ? rxBand.baseNoiseFloorDb : peakSignalDb,
-          noiseFloorDb: rxBand.baseNoiseFloorDb,
+          noiseFloorDb: effectiveNoiseFloorDb,
           audibleStationIds: audibleIds,
         });
       }

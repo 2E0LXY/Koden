@@ -1,4 +1,5 @@
-import type { Band } from "@koden/shared";
+import type { Band, FilterWidth, Mode } from "@koden/shared";
+import { passbandKHz } from "./propagation.js";
 
 /** dBFS-ish gain helper: convert a dB value to a linear amplitude multiplier. */
 export function dbToLinear(db: number): number {
@@ -49,9 +50,75 @@ export class PinkNoise {
 }
 
 /**
+ * Minimal RBJ-cookbook biquad, used server-side (no Web Audio API in Node)
+ * to shape noise per-mode: a narrow bandpass to make CW noise sound thin
+ * and "whistly" through a narrow filter, and a gentle lowpass to make AM
+ * noise sound duller/warmer than broadband SSB hiss.
+ */
+class Biquad {
+  private b0 = 0;
+  private b1 = 0;
+  private b2 = 0;
+  private a1 = 0;
+  private a2 = 0;
+  private x1 = 0;
+  private x2 = 0;
+  private y1 = 0;
+  private y2 = 0;
+
+  static bandpass(sampleRate: number, freq: number, q: number): Biquad {
+    const w0 = (2 * Math.PI * freq) / sampleRate;
+    const alpha = Math.sin(w0) / (2 * q);
+    const b0 = alpha;
+    const b1 = 0;
+    const b2 = -alpha;
+    const a0 = 1 + alpha;
+    const a1 = -2 * Math.cos(w0);
+    const a2 = 1 - alpha;
+    return Biquad.normalized(b0, b1, b2, a0, a1, a2);
+  }
+
+  static lowpass(sampleRate: number, freq: number, q: number): Biquad {
+    const w0 = (2 * Math.PI * freq) / sampleRate;
+    const alpha = Math.sin(w0) / (2 * q);
+    const cosw0 = Math.cos(w0);
+    const b1 = 1 - cosw0;
+    const b0 = b1 / 2;
+    const b2 = b0;
+    const a0 = 1 + alpha;
+    const a1 = -2 * cosw0;
+    const a2 = 1 - alpha;
+    return Biquad.normalized(b0, b1, b2, a0, a1, a2);
+  }
+
+  private static normalized(b0: number, b1: number, b2: number, a0: number, a1: number, a2: number): Biquad {
+    const f = new Biquad();
+    f.b0 = b0 / a0;
+    f.b1 = b1 / a0;
+    f.b2 = b2 / a0;
+    f.a1 = a1 / a0;
+    f.a2 = a2 / a0;
+    return f;
+  }
+
+  processInPlace(buf: Float32Array): void {
+    for (let i = 0; i < buf.length; i++) {
+      const x0 = buf[i];
+      const y0 = this.b0 * x0 + this.b1 * this.x1 + this.b2 * this.x2 - this.a1 * this.y1 - this.a2 * this.y2;
+      this.x2 = this.x1;
+      this.x1 = x0;
+      this.y2 = this.y1;
+      this.y1 = y0;
+      buf[i] = y0;
+    }
+  }
+}
+
+/**
  * Atmospheric "crash" static: sparse impulses (Poisson arrivals) with a
  * short, sharp exponential decay, like distant lightning strokes riding on
- * HF -- much more prominent on the lower bands (160m/80m/40m).
+ * HF -- much more prominent on the lower bands (160m/80m/40m), and worse at
+ * night once the D-layer stops absorbing distant thunderstorm noise.
  */
 export class AtmosphericCrackle {
   private samplesUntilNext = 0;
@@ -70,6 +137,10 @@ export class AtmosphericCrackle {
     const meanGapSamples = this.sampleRate / Math.max(this.cracklesPerSecond, 0.001);
     // Exponential inter-arrival time for a Poisson process.
     this.samplesUntilNext = Math.round(-Math.log(1 - Math.random()) * meanGapSamples);
+  }
+
+  setRate(cracklesPerSecond: number): void {
+    this.cracklesPerSecond = cracklesPerSecond;
   }
 
   fillAdd(out: Float32Array): void {
@@ -110,18 +181,40 @@ export class Birdie {
   }
 }
 
-/** Per-band ambient noise generator combining pink noise, crackle, and birdies. */
+/** Bandwidth of a "reference" SSB receiver, kHz -- the band noise floors in bands.ts are tuned around this. */
+const REFERENCE_BANDWIDTH_KHZ = 3;
+
+/**
+ * Per-mode noise floor gain adjustment. Real receiver noise power scales
+ * with the receiver's passband bandwidth: a 500Hz CW filter admits far less
+ * atmospheric/thermal noise than a 15kHz FM filter, so a narrower mode
+ * should sound quieter (and a wider one louder) even on the same band.
+ */
+export function modeNoiseGainDb(mode: Mode, filterWidth: FilterWidth): number {
+  const bandwidthKHz = passbandKHz(mode, filterWidth);
+  const gain = 10 * Math.log10(bandwidthKHz / REFERENCE_BANDWIDTH_KHZ);
+  return Math.max(-9, Math.min(8, gain));
+}
+
+/** Per-band, per-mode ambient noise generator combining pink noise, crackle, and birdies. */
 export class BandNoiseGenerator {
   private pink = new PinkNoise();
   private crackle: AtmosphericCrackle;
   private birdies: Birdie[];
+  private shaper: Biquad | null = null;
+  private baseCracklesPerSecond: number;
 
-  constructor(band: Band, sampleRate: number) {
+  constructor(
+    band: Band,
+    sampleRate: number,
+    private mode: Mode,
+    _filterWidth: FilterWidth,
+  ) {
     // Lower bands pick up far more atmospheric/lightning static.
     const lowBandBoost = Math.max(0, (7000 - band.rangeKHz[0]) / 7000);
-    const cracklesPerSecond = 0.5 + lowBandBoost * 6;
+    this.baseCracklesPerSecond = 0.5 + lowBandBoost * 6;
     const crackleIntensity = 0.15 + lowBandBoost * 0.35;
-    this.crackle = new AtmosphericCrackle(sampleRate, cracklesPerSecond, crackleIntensity);
+    this.crackle = new AtmosphericCrackle(sampleRate, this.baseCracklesPerSecond, crackleIntensity);
 
     // A couple of faint fixed birdies scattered across the band, as if from
     // internal oscillator harmonics -- cosmetic realism, not tied to any tx.
@@ -129,14 +222,37 @@ export class BandNoiseGenerator {
       new Birdie(sampleRate * 0.11, sampleRate, 0.01),
       new Birdie(sampleRate * 0.27, sampleRate, 0.006),
     ];
+
+    // CW is heard through a very narrow filter centered on the sidetone
+    // pitch, so its noise is a thin, "whistly" band of hiss rather than
+    // broadband static. AM's wider, symmetric double-sideband detector
+    // tends to sound a little duller/warmer than a sharp SSB filter.
+    if (mode === "CW" || mode === "RTTY") {
+      this.shaper = Biquad.bandpass(sampleRate, 700, 2.2);
+    } else if (mode === "AM") {
+      this.shaper = Biquad.lowpass(sampleRate, 3200, 0.7);
+    }
   }
 
-  /** Generate one frame of ambient band noise scaled by the given noise floor in dB. */
-  generate(nSamples: number, noiseFloorDb: number): Float32Array {
+  /** True if this generator can keep serving the given mode/filter without being rebuilt. */
+  matches(mode: Mode): boolean {
+    return this.mode === mode;
+  }
+
+  /**
+   * Generate one frame of ambient band noise. `noiseFloorDb` should already
+   * include any mode-bandwidth and day/night adjustments; `crackleRateMultiplier`
+   * lets callers boost atmospheric crashes at night without rebuilding the generator.
+   */
+  generate(nSamples: number, noiseFloorDb: number, crackleRateMultiplier = 1): Float32Array {
     const out = new Float32Array(nSamples);
     this.pink.fill(out);
+    if (this.shaper) this.shaper.processInPlace(out);
+
     const gain = dbToLinear(noiseFloorDb);
     for (let i = 0; i < out.length; i++) out[i] *= gain;
+
+    this.crackle.setRate(this.baseCracklesPerSecond * crackleRateMultiplier);
     this.crackle.fillAdd(out);
     for (const b of this.birdies) b.fillAdd(out);
     return out;
