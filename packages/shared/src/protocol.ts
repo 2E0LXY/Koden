@@ -1,0 +1,145 @@
+import { z } from "zod";
+
+export const ModeSchema = z.enum(["USB", "LSB", "CW", "AM", "FM", "RTTY", "DATA"]);
+
+export const FilterWidthSchema = z.enum(["narrow", "normal", "wide"]);
+export type FilterWidth = z.infer<typeof FilterWidthSchema>;
+
+export const AntennaIdSchema = z.enum([
+  "longwire",
+  "vertical",
+  "dipole",
+  "g5rv",
+  "yagi-small",
+  "yagi-3el",
+  "yagi-5el",
+]);
+
+/** Client -> server: introduce this station. */
+export const HelloMessage = z.object({
+  type: z.literal("hello"),
+  callsign: z.string().min(1).max(12),
+  grid: z.string().min(4).max(6),
+});
+
+/**
+ * Client -> server: retune the VFO and/or change mode. `freqKHz` is the
+ * station's effective *listening* frequency (VFO frequency plus any RIT
+ * offset, applied client-side). `txFreqKHz` is what other stations hear
+ * this station transmit on -- normally equal to `freqKHz`, but different
+ * when operating split (transmitting on VFO B while listening on VFO A).
+ */
+export const TuneMessage = z.object({
+  type: z.literal("tune"),
+  freqKHz: z.number().positive(),
+  mode: ModeSchema,
+  txFreqKHz: z.number().positive().optional(),
+  filterWidth: FilterWidthSchema.optional(),
+});
+
+/** Client -> server: push-to-talk state changed. */
+export const PttMessage = z.object({
+  type: z.literal("ptt"),
+  active: z.boolean(),
+});
+
+/** Client -> server: antenna type and/or rotator heading changed. */
+export const AntennaMessage = z.object({
+  type: z.literal("antenna"),
+  antenna: AntennaIdSchema,
+  headingDeg: z.number().min(0).max(359),
+});
+
+/** Client -> server: operator changed their callsign and/or grid locator from the setup panel. */
+export const ProfileMessage = z.object({
+  type: z.literal("profile"),
+  callsign: z.string().min(1).max(12),
+  grid: z.string().min(4).max(6),
+});
+
+/** Client -> server: RF output power (RF POWER knob) changed, in watts. */
+export const PowerMessage = z.object({
+  type: z.literal("power"),
+  watts: z.number().min(0).max(200),
+});
+
+/** Client -> server: antenna match (SWR) changed, e.g. after running the ATU or hopping bands. */
+export const SwrMessage = z.object({
+  type: z.literal("swr"),
+  swr: z.number().min(1).max(10),
+});
+
+export const ClientMessage = z.discriminatedUnion("type", [
+  HelloMessage,
+  TuneMessage,
+  PttMessage,
+  AntennaMessage,
+  ProfileMessage,
+  PowerMessage,
+  SwrMessage,
+]);
+export type ClientMessage = z.infer<typeof ClientMessage>;
+
+export const StationInfoSchema = z.object({
+  id: z.string(),
+  callsign: z.string(),
+  grid: z.string(),
+  freqKHz: z.number(),
+  txFreqKHz: z.number(),
+  mode: ModeSchema,
+  transmitting: z.boolean(),
+  antenna: AntennaIdSchema,
+  headingDeg: z.number(),
+});
+export type StationInfo = z.infer<typeof StationInfoSchema>;
+
+/** Server -> client: connection accepted, here is your session id. */
+export const WelcomeMessage = z.object({
+  type: z.literal("welcome"),
+  id: z.string(),
+  serverTimeMs: z.number(),
+});
+
+/** Server -> client: full list of currently connected stations. */
+export const RosterMessage = z.object({
+  type: z.literal("roster"),
+  stations: z.array(StationInfoSchema),
+});
+
+/** Server -> client: this listener's current S-meter / noise floor reading. */
+export const MeterMessage = z.object({
+  type: z.literal("meter"),
+  sMeterDb: z.number(),
+  noiseFloorDb: z.number(),
+  audibleStationIds: z.array(z.string()),
+});
+
+/** Server -> client: a notable propagation event worth surfacing in the UI. */
+export const BandEventMessage = z.object({
+  type: z.literal("band_event"),
+  kind: z.enum(["meteor_scatter", "band_opening", "band_closing", "flutter"]),
+  bandId: z.string(),
+  message: z.string(),
+});
+
+/** Server -> client: current real solar conditions (from NOAA SWPC), refreshed periodically. */
+export const SolarMessage = z.object({
+  type: z.literal("solar"),
+  sfi: z.number(),
+  kp: z.number(),
+});
+
+export const ErrorMessage = z.object({
+  type: z.literal("error"),
+  message: z.string(),
+});
+
+export const ServerMessage = z.discriminatedUnion("type", [
+  WelcomeMessage,
+  RosterMessage,
+  MeterMessage,
+  SolarMessage,
+  BandEventMessage,
+  ErrorMessage,
+]);
+export type ServerMessage = z.infer<typeof ServerMessage>;
