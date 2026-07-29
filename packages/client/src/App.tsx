@@ -129,6 +129,7 @@ export function App() {
   const [scanning, setScanning] = useState(false);
 
   const [roster, setRoster] = useState<StationInfo[]>([]);
+  const [solar, setSolar] = useState<{ sfi: number; kp: number } | null>(null);
   const [meter, setMeter] = useState({ sMeterDb: -95, noiseFloorDb: -70, audibleStationIds: [] as string[] });
   const [events, setEvents] = useState<string[]>([]);
 
@@ -220,6 +221,9 @@ export function App() {
             break;
           case "meter":
             setMeter(message);
+            break;
+          case "solar":
+            setSolar({ sfi: message.sfi, kp: message.kp });
             break;
           case "band_event":
             logEvent(message.message);
@@ -605,6 +609,7 @@ export function App() {
       sfxEnabled={sfxEnabled}
       onToggleSfx={onToggleSfx}
       onSaveProfile={onSaveProfile}
+      solar={solar}
       moniEnabled={moniEnabled}
       onToggleMoni={() => setMoniEnabled((s) => !s)}
       vfoA={vfoA}

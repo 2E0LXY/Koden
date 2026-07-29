@@ -55,6 +55,7 @@ interface RadioPanelProps {
   sfxEnabled: boolean;
   onToggleSfx: () => void;
   onSaveProfile: (callsign: string, grid: string) => void;
+  solar: { sfi: number; kp: number } | null;
 
   vfoA: VfoDisplay;
   vfoB: VfoDisplay;
@@ -181,6 +182,7 @@ export function RadioPanel(props: RadioPanelProps) {
     sfxEnabled,
     onToggleSfx,
     onSaveProfile,
+    solar,
     vfoA,
     vfoB,
     activeVfo,
@@ -361,6 +363,17 @@ export function RadioPanel(props: RadioPanelProps) {
             receive frequency, XIT offsets your transmit frequency; SPLIT transmits on the other VFO.
             TUNER runs a simulated antenna match. Static, QSB fading, meteor scatter, and band
             conditions are computed server-side and are unique to every listener.
+          </div>
+          <div className="panel__overlay-solar">
+            Solar conditions:{" "}
+            {solar ? (
+              <>
+                SFI <strong>{solar.sfi}</strong> &middot; K-index <strong>{solar.kp}</strong>
+              </>
+            ) : (
+              "loading..."
+            )}{" "}
+            (live NOAA SWPC data, refreshed every few minutes)
           </div>
           <SetupPanel
             callsign={callsign}

@@ -15,9 +15,11 @@ import {
 import { StationManager, type Station } from "./stationManager.js";
 import { MixerEngine } from "./dsp/mixer.js";
 import { bufferToInt16Array } from "./dsp/pcm.js";
+import { getSolarConditions, startSolarDataRefresh } from "./dsp/solar.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const TICK_MS = 20;
+const SOLAR_BROADCAST_MS = 5 * 60 * 1000;
 
 const stations = new StationManager();
 
@@ -30,6 +32,13 @@ function broadcastRoster(): void {
   const stationInfos: StationInfo[] = stations.all().map(toStationInfo);
   for (const s of stations.all()) {
     send(s.ws, { type: "roster", stations: stationInfos });
+  }
+}
+
+function broadcastSolar(): void {
+  const { sfi, kp } = getSolarConditions();
+  for (const s of stations.all()) {
+    send(s.ws, { type: "solar", sfi, kp });
   }
 }
 
@@ -108,6 +117,8 @@ wss.on("connection", (ws) => {
       stations.add(station);
       helloReceived = true;
       send(ws, { type: "welcome", id, serverTimeMs: Date.now() });
+      const { sfi, kp } = getSolarConditions();
+      send(ws, { type: "solar", sfi, kp });
       broadcastRoster();
       return;
     }
@@ -164,6 +175,9 @@ setInterval(() => {
   lastTick = now;
   mixer.tick(now, dt);
 }, TICK_MS);
+
+startSolarDataRefresh();
+setInterval(broadcastSolar, SOLAR_BROADCAST_MS);
 
 httpServer.listen(PORT, () => {
   console.log(`Koden server listening on :${PORT} (ws path /ws)`);

@@ -12,7 +12,7 @@ import {
   gridToLatLon,
   localSolarHour,
 } from "@koden/shared";
-import { solarFluxIndex } from "./solar.js";
+import { getNormalizedSolarFlux } from "./solar.js";
 
 const FILTER_WIDTH_MULTIPLIER: Record<FilterWidth, number> = {
   narrow: 0.5,
@@ -118,7 +118,7 @@ function gaussianRandom(): number {
  * Simplified propagation simulation. This is not a physically accurate
  * ionospheric model -- it's a set of tunable heuristics chosen to *feel*
  * like real HF: distance-based path loss, day/night + band-dependent
- * absorption/skip, a compressed "solar cycle" driving how well the high
+ * absorption/skip, real NOAA solar flux/K-index driving how well the high
  * bands open up, slow QSB fading per station pair, and random meteor
  * scatter bursts on the bands prone to them.
  */
@@ -151,7 +151,7 @@ export class PropagationEngine {
     const rxDaylight = daylightFactor(localSolarHour(rxLoc.lon, nowMs));
     const avgDaylight = (txDaylight + rxDaylight) / 2;
 
-    const flux = solarFluxIndex(nowMs);
+    const flux = getNormalizedSolarFlux();
     const band = input.band;
 
     // Baseline path loss: gentle log falloff, tuned so "local" (<50km)

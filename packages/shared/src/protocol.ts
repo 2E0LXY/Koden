@@ -108,6 +108,13 @@ export const BandEventMessage = z.object({
   message: z.string(),
 });
 
+/** Server -> client: current real solar conditions (from NOAA SWPC), refreshed periodically. */
+export const SolarMessage = z.object({
+  type: z.literal("solar"),
+  sfi: z.number(),
+  kp: z.number(),
+});
+
 export const ErrorMessage = z.object({
   type: z.literal("error"),
   message: z.string(),
@@ -117,6 +124,7 @@ export const ServerMessage = z.discriminatedUnion("type", [
   WelcomeMessage,
   RosterMessage,
   MeterMessage,
+  SolarMessage,
   BandEventMessage,
   ErrorMessage,
 ]);
