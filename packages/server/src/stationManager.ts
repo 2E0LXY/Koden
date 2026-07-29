@@ -15,6 +15,10 @@ export interface Station {
   antenna: AntennaId;
   /** Rotator heading in degrees (0-359); only meaningful for rotatable (beam) antennas. */
   headingDeg: number;
+  /** RF output power set via the RF POWER knob, watts. */
+  txPowerWatts: number;
+  /** Current antenna match (SWR); 1.0 is a perfect match, higher values reflect more power back into the transmitter. */
+  swr: number;
   transmitting: boolean;
   /** Latest audio frame received this tick from this station, if any. */
   pendingFrame: Int16Array | null;

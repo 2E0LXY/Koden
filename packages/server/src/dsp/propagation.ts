@@ -6,6 +6,7 @@ import {
   DEFAULT_ANTENNA,
   antennaById,
   antennaGainDb,
+  antennaHeightGainDb,
   daylightFactor,
   gridBearingDeg,
   gridDistanceKm,
@@ -55,6 +56,10 @@ export interface PropagationInput {
   txHeadingDeg: number;
   rxAntenna: AntennaId;
   rxHeadingDeg: number;
+  /** Transmitter's RF output power, watts. */
+  txPowerWatts: number;
+  /** Transmitter's current antenna match (SWR); 1.0 = perfect match. */
+  txSwr: number;
 }
 
 export interface PropagationResult {
@@ -112,6 +117,28 @@ function gaussianRandom(): number {
   while (u === 0) u = Math.random();
   while (v === 0) v = Math.random();
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+const REFERENCE_POWER_WATTS = 100;
+
+/** dB contribution of transmit power relative to a 100W reference (10dB per decade). */
+function txPowerGainDb(watts: number): number {
+  const clamped = Math.max(1, watts);
+  return 10 * Math.log10(clamped / REFERENCE_POWER_WATTS);
+}
+
+/**
+ * dB of signal lost to a mismatched antenna: the real reflected-power loss
+ * from the VSWR, plus (above 3:1) the extra foldback a transceiver applies
+ * to protect its finals from a bad match.
+ */
+function swrLossDb(swr: number): number {
+  const s = Math.max(1, swr);
+  const reflectionCoeff = (s - 1) / (s + 1);
+  const reflectedFraction = reflectionCoeff * reflectionCoeff;
+  const mismatchLossDb = -10 * Math.log10(Math.max(1e-6, 1 - reflectedFraction));
+  const foldbackDb = s > 3 ? (s - 3) * 2.5 : 0;
+  return mismatchLossDb + foldbackDb;
 }
 
 /**
@@ -204,6 +231,18 @@ export class PropagationEngine {
     const txAntennaGainDb = antennaGainDb(txAntenna, input.txHeadingDeg, bearingTxToRx);
     const rxAntennaGainDb = antennaGainDb(rxAntenna, input.rxHeadingDeg, bearingRxToTx);
 
+    // Mounting height shifts the takeoff angle: tall antennas favour the
+    // shallow-angle hop long DX needs, low antennas favour the steep NVIS
+    // hop shorter regional contacts use instead.
+    const txHeightGainDb = antennaHeightGainDb(txAntenna, distanceKm);
+    const rxHeightGainDb = antennaHeightGainDb(rxAntenna, distanceKm);
+
+    // The actual RF power knob setting and the transmitter's antenna match
+    // now really do change what the far end hears, instead of only being
+    // cosmetic client-side state.
+    const powerDb = txPowerGainDb(input.txPowerWatts);
+    const swrLoss = swrLossDb(input.txSwr);
+
     const signalDb =
       pathLossDb -
       dayAbsorptionPenalty +
@@ -212,7 +251,11 @@ export class PropagationEngine {
       fadeDb +
       meteorBoostDb +
       txAntennaGainDb +
-      rxAntennaGainDb;
+      rxAntennaGainDb +
+      txHeightGainDb +
+      rxHeightGainDb +
+      powerDb -
+      swrLoss;
 
     return { inPassband: true, signalDb, meteorScatterActive, meteorScatterJustStarted };
   }

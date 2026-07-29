@@ -82,6 +82,8 @@ export class MixerEngine {
             txHeadingDeg: tx.headingDeg,
             rxAntenna: rx.antenna,
             rxHeadingDeg: rx.headingDeg,
+            txPowerWatts: tx.txPowerWatts,
+            txSwr: tx.swr,
           },
           nowMs,
           dtMs,

@@ -278,6 +278,20 @@ export function App() {
     audioEngineRef.current?.setTxPower(txPower);
   }, [txPower]);
 
+  // Push RF output power to the server whenever the RF POWER knob changes --
+  // it now actually affects what other stations hear, not just local audio gain.
+  useEffect(() => {
+    if (!joined) return;
+    socketRef.current?.send({ type: "power", watts: txPower * 10 });
+  }, [joined, txPower]);
+
+  // Push the antenna match (SWR) to the server whenever it changes -- a bad
+  // match now really does attenuate the transmitted signal for everyone else.
+  useEffect(() => {
+    if (!joined) return;
+    socketRef.current?.send({ type: "swr", swr });
+  }, [joined, swr]);
+
   // Squelch gating: mute/unmute based on current signal vs threshold, with the
   // characteristic "tail" thump when it opens or closes.
   useEffect(() => {

@@ -110,6 +110,8 @@ wss.on("connection", (ws) => {
         filterWidth: "normal",
         antenna: DEFAULT_ANTENNA,
         headingDeg: 0,
+        txPowerWatts: 100,
+        swr: 2.8,
         transmitting: false,
         pendingFrame: null,
         connectedAt: Date.now(),
@@ -145,6 +147,10 @@ wss.on("connection", (ws) => {
       station.antenna = parsed.antenna;
       station.headingDeg = parsed.headingDeg;
       broadcastRoster();
+    } else if (parsed.type === "power") {
+      station.txPowerWatts = parsed.watts;
+    } else if (parsed.type === "swr") {
+      station.swr = parsed.swr;
     } else if (parsed.type === "profile") {
       if (!isValidGrid(parsed.grid)) {
         send(ws, { type: "error", message: "Invalid grid locator" });

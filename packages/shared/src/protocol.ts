@@ -57,12 +57,26 @@ export const ProfileMessage = z.object({
   grid: z.string().min(4).max(6),
 });
 
+/** Client -> server: RF output power (RF POWER knob) changed, in watts. */
+export const PowerMessage = z.object({
+  type: z.literal("power"),
+  watts: z.number().min(0).max(200),
+});
+
+/** Client -> server: antenna match (SWR) changed, e.g. after running the ATU or hopping bands. */
+export const SwrMessage = z.object({
+  type: z.literal("swr"),
+  swr: z.number().min(1).max(10),
+});
+
 export const ClientMessage = z.discriminatedUnion("type", [
   HelloMessage,
   TuneMessage,
   PttMessage,
   AntennaMessage,
   ProfileMessage,
+  PowerMessage,
+  SwrMessage,
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
