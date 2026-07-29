@@ -21,6 +21,15 @@ jobs:
           SSH_USER: ${{ secrets.VPS_USER }}
           DEPLOY_REF: ${{ github.event.inputs.ref || 'main' }}
         run: |
+          missing=""
+          [ -z "$SSH_KEY" ] && missing="$missing VPS_SSH_KEY"
+          [ -z "$SSH_HOST" ] && missing="$missing VPS_HOST"
+          [ -z "$SSH_USER" ] && missing="$missing VPS_USER"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing -- add them under Settings > Secrets and variables > Actions > Repository secrets (not Environment/Codespaces/Dependabot secrets)."
+            exit 1
+          fi
+
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
