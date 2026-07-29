@@ -13,7 +13,8 @@ import {
   gridToLatLon,
   localSolarHour,
 } from "@koden/shared";
-import { getNormalizedSolarFlux } from "./solar.js";
+import { getNormalizedSolarFlux, getSolarConditions } from "./solar.js";
+import type { SporadicEEngine } from "./sporadicE.js";
 
 const FILTER_WIDTH_MULTIPLIER: Record<FilterWidth, number> = {
   narrow: 0.5,
@@ -71,6 +72,10 @@ export interface PropagationResult {
   meteorScatterActive: boolean;
   /** True on the single tick a new meteor scatter burst begins. */
   meteorScatterJustStarted: boolean;
+  /** True while rapid flutter fading (disturbed-ionosphere fast fading) is active on this path. */
+  flutterActive: boolean;
+  /** True on the single tick a new flutter episode begins. */
+  flutterJustStarted: boolean;
 }
 
 /** Slow mean-reverting random walk (Ornstein-Uhlenbeck) used for QSB fading. */
@@ -110,6 +115,37 @@ class MeteorScatterState {
   }
 }
 
+/**
+ * Rapid, shallow amplitude flutter -- the fast jittery fading heard on
+ * disturbed-ionosphere/high-latitude paths, distinct from slow QSB. Bursts
+ * are more frequent the more disturbed geomagnetic conditions are (higher
+ * real-world Kp).
+ */
+class FlutterState {
+  private remainingMs = 0;
+  private phase = 0;
+
+  step(
+    dtMs: number,
+    chancePerSecond: number,
+    kpFactor: number,
+  ): { active: boolean; deltaDb: number; justStarted: boolean } {
+    if (this.remainingMs > 0) {
+      this.remainingMs -= dtMs;
+      this.phase += dtMs * (0.006 + kpFactor * 0.01);
+      const deltaDb = Math.sin(this.phase * 2 * Math.PI) * (3 + kpFactor * 4);
+      return { active: true, deltaDb, justStarted: false };
+    }
+    const p = chancePerSecond * (dtMs / 1000);
+    if (Math.random() < p) {
+      this.remainingMs = 3000 + Math.random() * 12000;
+      this.phase = 0;
+      return { active: true, deltaDb: 0, justStarted: true };
+    }
+    return { active: false, deltaDb: 0, justStarted: false };
+  }
+}
+
 function gaussianRandom(): number {
   // Box-Muller transform.
   let u = 0;
@@ -117,6 +153,24 @@ function gaussianRandom(): number {
   while (u === 0) u = Math.random();
   while (v === 0) v = Math.random();
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+/** Groundwave signal: strong out to `rangeKm`, then rolls off steeply once past it. */
+export function groundwaveDb(distanceKm: number, rangeKm: number): number {
+  const t = distanceKm / rangeKm;
+  return -6 * t - Math.max(0, t - 1) * 40;
+}
+
+/**
+ * Skywave signal: the usual distance-based log falloff, but heavily
+ * attenuated inside `skipDistanceKm` -- there's no ionospheric reflection
+ * point that close in, so a real skywave hop can't land there yet.
+ */
+export function skywaveDb(distanceKm: number, skipDistanceKm: number): number {
+  const base = -18 * Math.log10(1 + distanceKm / 40);
+  const skipPenalty =
+    distanceKm < skipDistanceKm ? (1 - distanceKm / skipDistanceKm) * 35 : 0;
+  return base - skipPenalty;
 }
 
 const REFERENCE_POWER_WATTS = 100;
@@ -144,14 +198,19 @@ function swrLossDb(swr: number): number {
 /**
  * Simplified propagation simulation. This is not a physically accurate
  * ionospheric model -- it's a set of tunable heuristics chosen to *feel*
- * like real HF: distance-based path loss, day/night + band-dependent
- * absorption/skip, real NOAA solar flux/K-index driving how well the high
- * bands open up, slow QSB fading per station pair, and random meteor
- * scatter bursts on the bands prone to them.
+ * like real HF: groundwave/skywave path loss (with a genuine skip-zone dead
+ * spot between them), day/night + band-dependent absorption/skip, real
+ * NOAA solar flux/K-index driving how well the high bands open up, slow
+ * QSB fading and rapid Kp-linked flutter per station pair, random meteor
+ * scatter bursts and band-wide sporadic-E openings on the bands prone to
+ * them, and each transmitter's actual power/antenna/SWR.
  */
 export class PropagationEngine {
   private fades = new Map<string, FadeProcess>();
   private meteors = new Map<string, MeteorScatterState>();
+  private flutters = new Map<string, FlutterState>();
+
+  constructor(private sporadicE: SporadicEEngine) {}
 
   private keyFor(txId: string, rxId: string): string {
     return `${txId}:${rxId}`;
@@ -166,6 +225,8 @@ export class PropagationEngine {
         signalDb: -999,
         meteorScatterActive: false,
         meteorScatterJustStarted: false,
+        flutterActive: false,
+        flutterJustStarted: false,
       };
     }
 
@@ -181,10 +242,16 @@ export class PropagationEngine {
     const flux = getNormalizedSolarFlux();
     const band = input.band;
 
-    // Baseline path loss: gentle log falloff, tuned so "local" (<50km)
-    // contacts are essentially full-strength and DX (thousands of km)
-    // contacts depend heavily on band/propagation conditions.
-    const pathLossDb = -18 * Math.log10(1 + distanceKm / 40);
+    // Baseline path loss is the stronger of groundwave (dominant close in,
+    // rolls off steeply past the band's typical groundwave range) or
+    // skywave (heavily attenuated inside the band's typical skip distance,
+    // then the usual gentle log falloff beyond it). Between the two lies
+    // the classic "skip zone" dead spot: too far for groundwave, too close
+    // for the first skywave hop to land.
+    const pathLossDb = Math.max(
+      groundwaveDb(distanceKm, band.groundwaveRangeKm),
+      skywaveDb(distanceKm, band.skipDistanceKm),
+    );
 
     // Low bands (160/80/40) suffer daytime D-layer absorption but open up
     // for DX at night. High bands (15/12/10/6) need daylight to support
@@ -220,6 +287,28 @@ export class PropagationEngine {
       justStarted: meteorScatterJustStarted,
     } = meteor.step(dtMs, meteorChancePerSecond);
 
+    // Sporadic-E: a band-wide opening (tracked centrally, not per station
+    // pair) rather than a per-pair random process -- distinct from meteor
+    // scatter above.
+    const sporadicEBoostDb = this.sporadicE.boostDb(band.id, distanceKm);
+
+    // Flutter: rapid, shallow fast-fading distinct from the slow QSB fade
+    // above. More frequent when real-world geomagnetic conditions (Kp) are
+    // disturbed.
+    let flutter = this.flutters.get(key);
+    if (!flutter) {
+      flutter = new FlutterState();
+      this.flutters.set(key, flutter);
+    }
+    const kp = getSolarConditions().kp;
+    const kpFactor = Math.max(0, Math.min(1, (kp - 3) / 6));
+    const flutterChancePerSecond = 0.0004 + kpFactor * 0.004;
+    const {
+      active: flutterActive,
+      deltaDb: flutterDb,
+      justStarted: flutterJustStarted,
+    } = flutter.step(dtMs, flutterChancePerSecond, kpFactor);
+
     // Directional antenna gain: how much each end's antenna actually favors
     // the bearing toward the other station, given where it's pointed.
     // Omnidirectional types (wire antennas, verticals) ignore heading
@@ -250,6 +339,8 @@ export class PropagationEngine {
       skipBonus +
       fadeDb +
       meteorBoostDb +
+      sporadicEBoostDb +
+      flutterDb +
       txAntennaGainDb +
       rxAntennaGainDb +
       txHeightGainDb +
@@ -257,16 +348,26 @@ export class PropagationEngine {
       powerDb -
       swrLoss;
 
-    return { inPassband: true, signalDb, meteorScatterActive, meteorScatterJustStarted };
+    return {
+      inPassband: true,
+      signalDb,
+      meteorScatterActive,
+      meteorScatterJustStarted,
+      flutterActive,
+      flutterJustStarted,
+    };
   }
 
-  /** Drop cached fade/meteor state for a station pair, e.g. on disconnect. */
+  /** Drop cached fade/meteor/flutter state for a station pair, e.g. on disconnect. */
   forget(id: string): void {
     for (const key of [...this.fades.keys()]) {
       if (key.startsWith(`${id}:`) || key.endsWith(`:${id}`)) this.fades.delete(key);
     }
     for (const key of [...this.meteors.keys()]) {
       if (key.startsWith(`${id}:`) || key.endsWith(`:${id}`)) this.meteors.delete(key);
+    }
+    for (const key of [...this.flutters.keys()]) {
+      if (key.startsWith(`${id}:`) || key.endsWith(`:${id}`)) this.flutters.delete(key);
     }
   }
 }

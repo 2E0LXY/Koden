@@ -11,10 +11,16 @@ export interface Band {
   daytimeAbsorption: number;
   /** Relative skip/DX potential at night (0 = poor, 1 = excellent). */
   nighttimeDx: number;
-  /** How prone this band is to short, random sporadic-E / meteor-scatter style openings. */
+  /** How prone this band is to short, random meteor-scatter pings off meteor trails. */
   meteorScatterProne: boolean;
   /** Baseline atmospheric/thermal noise floor in dB above a common reference; lower HF is noisier. */
   baseNoiseFloorDb: number;
+  /** Typical range (km) within which groundwave (not skywave) carries the signal. */
+  groundwaveRangeKm: number;
+  /** Typical distance (km) to the first skywave hop; closer than this is the "skip zone" dead spot between groundwave and skywave. */
+  skipDistanceKm: number;
+  /** Whether this band gets sporadic-E short-skip openings (distinct from meteor scatter): a regional ionised patch that suddenly opens the band for everyone within range, for minutes at a time. */
+  sporadicEProne: boolean;
 }
 
 export const BANDS: Band[] = [
@@ -28,6 +34,9 @@ export const BANDS: Band[] = [
     nighttimeDx: 0.8,
     meteorScatterProne: false,
     baseNoiseFloorDb: -25,
+    groundwaveRangeKm: 60,
+    skipDistanceKm: 150,
+    sporadicEProne: false,
   },
   {
     id: "80m",
@@ -39,6 +48,9 @@ export const BANDS: Band[] = [
     nighttimeDx: 0.85,
     meteorScatterProne: false,
     baseNoiseFloorDb: -30,
+    groundwaveRangeKm: 45,
+    skipDistanceKm: 200,
+    sporadicEProne: false,
   },
   {
     id: "40m",
@@ -50,6 +62,9 @@ export const BANDS: Band[] = [
     nighttimeDx: 0.9,
     meteorScatterProne: false,
     baseNoiseFloorDb: -35,
+    groundwaveRangeKm: 35,
+    skipDistanceKm: 300,
+    sporadicEProne: false,
   },
   {
     id: "30m",
@@ -61,6 +76,9 @@ export const BANDS: Band[] = [
     nighttimeDx: 0.88,
     meteorScatterProne: false,
     baseNoiseFloorDb: -37,
+    groundwaveRangeKm: 25,
+    skipDistanceKm: 500,
+    sporadicEProne: false,
   },
   {
     id: "20m",
@@ -72,6 +90,9 @@ export const BANDS: Band[] = [
     nighttimeDx: 0.5,
     meteorScatterProne: false,
     baseNoiseFloorDb: -40,
+    groundwaveRangeKm: 20,
+    skipDistanceKm: 800,
+    sporadicEProne: false,
   },
   {
     id: "17m",
@@ -83,6 +104,9 @@ export const BANDS: Band[] = [
     nighttimeDx: 0.35,
     meteorScatterProne: false,
     baseNoiseFloorDb: -43,
+    groundwaveRangeKm: 18,
+    skipDistanceKm: 1000,
+    sporadicEProne: false,
   },
   {
     id: "15m",
@@ -94,6 +118,9 @@ export const BANDS: Band[] = [
     nighttimeDx: 0.2,
     meteorScatterProne: false,
     baseNoiseFloorDb: -45,
+    groundwaveRangeKm: 15,
+    skipDistanceKm: 1200,
+    sporadicEProne: false,
   },
   {
     id: "12m",
@@ -105,6 +132,9 @@ export const BANDS: Band[] = [
     nighttimeDx: 0.1,
     meteorScatterProne: true,
     baseNoiseFloorDb: -47,
+    groundwaveRangeKm: 12,
+    skipDistanceKm: 1500,
+    sporadicEProne: false,
   },
   {
     id: "10m",
@@ -116,6 +146,9 @@ export const BANDS: Band[] = [
     nighttimeDx: 0.05,
     meteorScatterProne: true,
     baseNoiseFloorDb: -50,
+    groundwaveRangeKm: 10,
+    skipDistanceKm: 1800,
+    sporadicEProne: true,
   },
   {
     id: "6m",
@@ -127,6 +160,9 @@ export const BANDS: Band[] = [
     nighttimeDx: 0.02,
     meteorScatterProne: true,
     baseNoiseFloorDb: -55,
+    groundwaveRangeKm: 8,
+    skipDistanceKm: 1500,
+    sporadicEProne: true,
   },
 ];
 

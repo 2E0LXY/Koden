@@ -1,9 +1,11 @@
 import { WebSocket } from "ws";
 import {
+  BANDS,
   FRAME_SAMPLES,
   type Band,
   type ServerMessage,
   antennaById,
+  bandById,
   daylightFactor,
   findBand,
   gridToLatLon,
@@ -12,6 +14,7 @@ import {
 import type { Station } from "../stationManager.js";
 import { StationManager } from "../stationManager.js";
 import { PropagationEngine } from "./propagation.js";
+import { SporadicEEngine } from "./sporadicE.js";
 import { BandNoiseGenerator, dbToLinear, modeNoiseGainDb } from "./noise.js";
 import { int16ToFloat32, float32ToInt16 } from "./pcm.js";
 
@@ -26,7 +29,8 @@ interface RxNoiseState {
 }
 
 export class MixerEngine {
-  private propagation = new PropagationEngine();
+  private sporadicE = new SporadicEEngine();
+  private propagation = new PropagationEngine(this.sporadicE);
   private noiseByStation = new Map<string, RxNoiseState>();
   private tickCount = 0;
 
@@ -55,6 +59,18 @@ export class MixerEngine {
     this.tickCount++;
     const all = this.stations.all();
     const transmitters = all.filter((s) => s.transmitting && s.pendingFrame);
+
+    for (const event of this.sporadicE.tick(BANDS, dtMs)) {
+      const band = bandById(event.bandId);
+      if (!band) continue;
+      const message =
+        event.kind === "band_opening"
+          ? `Sporadic-E opening on ${band.name} -- short-skip DX may be workable!`
+          : `Sporadic-E opening on ${band.name} has closed.`;
+      for (const s of all) {
+        this.send(s.ws, { type: "band_event", kind: event.kind, bandId: band.id, message });
+      }
+    }
 
     for (const rx of all) {
       const rxBand = findBand(rx.freqKHz);
@@ -100,6 +116,15 @@ export class MixerEngine {
             kind: "meteor_scatter",
             bandId: rxBand.id,
             message: `Meteor scatter ping from ${tx.callsign}!`,
+          });
+        }
+
+        if (result.flutterJustStarted) {
+          this.send(rx.ws, {
+            type: "band_event",
+            kind: "flutter",
+            bandId: rxBand.id,
+            message: `Flutter fading on ${tx.callsign}'s signal -- disturbed ionosphere.`,
           });
         }
 
