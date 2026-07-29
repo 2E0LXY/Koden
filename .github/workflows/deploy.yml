@@ -36,4 +36,4 @@ jobs:
           ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
           ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" \
-            "REPO_REF='$DEPLOY_REF' bash /opt/koden/deploy/install.sh"
+            "REPO_REF='$DEPLOY_REF' ADDR='kodenradio.uk' ADDR_ALIASES='www.kodenradio.uk' bash /opt/koden/deploy/install.sh"
