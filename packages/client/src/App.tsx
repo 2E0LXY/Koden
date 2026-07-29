@@ -488,28 +488,30 @@ export function App() {
     relay(true);
     audioEngineRef.current?.setSquelchOpen(false);
 
-    // Sweep the SWR through a jittery search (relays clicking through L/C
-    // combinations) before settling on a good match, like a real ATU.
+    // Sweep the SWR through a jittery search -- a rapid chatter of relays
+    // stepping through L/C combinations, like a real ATU hunting for a
+    // match -- before settling on a good one.
     const finalSwr = 1.05 + Math.random() * 0.25;
-    const sweep: { atMs: number; value: number }[] = [
-      { atMs: 150, value: 2.4 + Math.random() * 1.6 },
-      { atMs: 350, value: 1.9 + Math.random() * 1.3 },
-      { atMs: 550, value: 3.0 + Math.random() * 1.5 },
-      { atMs: 750, value: 1.4 + Math.random() * 0.7 },
-      { atMs: 950, value: finalSwr + 0.2 + Math.random() * 0.3 },
-    ];
-    const timeouts = sweep.map(({ atMs, value }) =>
+    const totalMs = 2400;
+    const stepCount = 16;
+    const sweep: { atMs: number; value: number }[] = Array.from({ length: stepCount }, (_, i) => {
+      const isLast = i === stepCount - 1;
+      const atMs = 120 + i * ((totalMs - 300) / stepCount) + Math.random() * 40;
+      const value = isLast ? finalSwr + 0.2 + Math.random() * 0.3 : 1.4 + Math.random() * 3.2;
+      return { atMs, value };
+    });
+    const timeouts = sweep.map(({ atMs, value }, i) =>
       window.setTimeout(() => {
         setSwr(value);
-        detent();
+        relay(i % 2 === 0);
       }, atMs),
     );
-    const relayOff = window.setTimeout(() => relay(false), 900);
+    const relayOff = window.setTimeout(() => relay(false), totalMs - 100);
     const done = window.setTimeout(() => {
       setSwr(finalSwr);
       setTunerActive(false);
       logEvent(`ATU: match found, SWR ${finalSwr.toFixed(1)}:1 on ${band?.name ?? "current band"}`);
-    }, 1200);
+    }, totalMs);
 
     return () => [...timeouts, relayOff, done].forEach(window.clearTimeout);
   }, [tunerActive, band, logEvent]);
