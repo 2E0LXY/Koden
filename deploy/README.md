@@ -44,16 +44,20 @@ When it finishes it prints the URL to open (`https://<your-ip>/`).
 
 All optional, set as environment variables before running:
 
-| Variable      | Default                          | Meaning |
-|---------------|-----------------------------------|---------|
-| `REPO_URL`    | this repo, HTTPS                  | Git remote to deploy from |
-| `REPO_REF`    | `main`                            | Branch/tag/commit to deploy |
-| `ADDR`        | auto-detected public IP           | Hostname or IP Caddy serves on and the client connects its WebSocket to |
-| `INSTALL_DIR` | `/opt/koden`                      | Where the app lives on disk |
-| `NODE_MAJOR`  | `22`                               | Node.js major version to install |
+| Variable       | Default                          | Meaning |
+|----------------|-----------------------------------|---------|
+| `REPO_URL`     | this repo, HTTPS                  | Git remote to deploy from |
+| `REPO_REF`     | `main`                            | Branch/tag/commit to deploy |
+| `ADDR`         | auto-detected public IP           | Canonical hostname or IP Caddy serves on and the client connects its WebSocket to |
+| `ADDR_ALIASES` | none                              | Comma-separated extra hostnames (e.g. a `www.` variant) that 301-redirect to `ADDR` -- each still gets its own real certificate |
+| `INSTALL_DIR`  | `/opt/koden`                      | Where the app lives on disk |
+| `NODE_MAJOR`   | `22`                               | Node.js major version to install |
 
 If you have a real domain pointed at the VPS, set `ADDR=your.domain.com` to
-get a proper trusted certificate instead of the self-signed fallback.
+get a proper trusted certificate instead of the self-signed fallback. Koden
+is live at **https://kodenradio.uk** (with `https://www.kodenradio.uk`
+redirecting to it), deployed via `ADDR=kodenradio.uk
+ADDR_ALIASES=www.kodenradio.uk` -- see `.github/workflows/deploy.yml`.
 
 ## What it sets up
 

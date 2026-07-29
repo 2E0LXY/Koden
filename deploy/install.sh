@@ -27,7 +27,12 @@
 #                IP addresses. Browsers will show a one-time security
 #                warning to click through -- after that, mic access works
 #                normally, because HTTPS (even self-signed) counts as a
-#                secure context.
+#                secure context. This is the canonical hostname baked into
+#                the client build (VITE_SERVER_WS_URL), so pick one even if
+#                you also set ADDR_ALIASES.
+#   ADDR_ALIASES - comma-separated additional hostnames (e.g. a bare
+#                "www." variant) that should 301-redirect to ADDR. Each gets
+#                its own real Let's Encrypt certificate too.
 #   NODE_MAJOR - Node.js major version to install (default: 22)
 set -euo pipefail
 
@@ -39,6 +44,7 @@ fi
 REPO_URL="${REPO_URL:-https://github.com/2E0LXY/Koden.git}"
 REPO_REF="${REPO_REF:-main}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/koden}"
+ADDR_ALIASES="${ADDR_ALIASES:-}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 SERVICE_USER="koden"
 NODE_PORT="8787"
@@ -186,6 +192,18 @@ ${ADDR} {
 }
 EOF
 
+if [[ -n "$ADDR_ALIASES" ]]; then
+  log "Adding redirect(s) to canonical host: $ADDR_ALIASES -> $ADDR"
+  for alias in ${ADDR_ALIASES//,/ }; do
+    cat >> /etc/caddy/Caddyfile <<EOF
+
+${alias} {
+	redir https://${ADDR}{uri} permanent
+}
+EOF
+  done
+fi
+
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
   log "Opening firewall ports 80/443"
   ufw allow 80/tcp || true
@@ -201,9 +219,16 @@ systemctl restart caddy
 
 log "Done"
 echo "Koden should now be reachable at: https://${ADDR}/"
-echo "The certificate is self-signed (no domain name was used) -- accept the"
-echo "one-time browser warning; the page will still be a secure context, so"
-echo "microphone access works normally afterwards."
+if [[ -n "$TLS_DIRECTIVE" ]]; then
+  echo "The certificate is self-signed (no domain name was used) -- accept the"
+  echo "one-time browser warning; the page will still be a secure context, so"
+  echo "microphone access works normally afterwards."
+else
+  echo "Caddy requested a real Let's Encrypt certificate for this hostname."
+fi
+if [[ -n "$ADDR_ALIASES" ]]; then
+  echo "Redirecting to it from: $ADDR_ALIASES"
+fi
 echo
 echo "Logs:      journalctl -u koden-server -f"
 echo "Caddy log: journalctl -u caddy -f"
