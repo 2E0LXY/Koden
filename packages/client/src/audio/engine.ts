@@ -341,11 +341,18 @@ export class AudioEngine {
     if (p.agcMode === "OFF") {
       this.agcCompressor.threshold.value = 0;
       this.agcCompressor.ratio.value = 1;
+      this.agcCompressor.knee.value = 0;
     } else {
-      this.agcCompressor.threshold.value = -30;
-      this.agcCompressor.ratio.value = 8;
-      this.agcCompressor.attack.value = p.agcMode === "FAST" ? 0.003 : 0.01;
-      this.agcCompressor.release.value = p.agcMode === "FAST" ? 0.15 : 1.2;
+      // A real AGC's characteristic "pumping" -- audible gain recovering
+      // after a strong peak or a fade -- needs a near-limiter ratio and a
+      // hard knee. FAST reacts almost instantly and recovers quickly enough
+      // for the pump to be clearly audible on fading/fluttering signals;
+      // SLOW is gentler and smooths most of it away.
+      this.agcCompressor.threshold.value = -24;
+      this.agcCompressor.ratio.value = p.agcMode === "FAST" ? 20 : 12;
+      this.agcCompressor.knee.value = p.agcMode === "FAST" ? 0 : 6;
+      this.agcCompressor.attack.value = p.agcMode === "FAST" ? 0.002 : 0.01;
+      this.agcCompressor.release.value = p.agcMode === "FAST" ? 0.08 : 0.8;
     }
 
     const balance = 0.5 + p.afRfBalance / 10;

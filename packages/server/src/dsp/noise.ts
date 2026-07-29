@@ -55,7 +55,7 @@ export class PinkNoise {
  * and "whistly" through a narrow filter, and a gentle lowpass to make AM
  * noise sound duller/warmer than broadband SSB hiss.
  */
-class Biquad {
+export class Biquad {
   private b0 = 0;
   private b1 = 0;
   private b2 = 0;
@@ -84,6 +84,19 @@ class Biquad {
     const cosw0 = Math.cos(w0);
     const b1 = 1 - cosw0;
     const b0 = b1 / 2;
+    const b2 = b0;
+    const a0 = 1 + alpha;
+    const a1 = -2 * cosw0;
+    const a2 = 1 - alpha;
+    return Biquad.normalized(b0, b1, b2, a0, a1, a2);
+  }
+
+  static highpass(sampleRate: number, freq: number, q: number): Biquad {
+    const w0 = (2 * Math.PI * freq) / sampleRate;
+    const alpha = Math.sin(w0) / (2 * q);
+    const cosw0 = Math.cos(w0);
+    const b1 = -(1 + cosw0);
+    const b0 = -b1 / 2;
     const b2 = b0;
     const a0 = 1 + alpha;
     const a1 = -2 * cosw0;

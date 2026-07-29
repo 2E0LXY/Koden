@@ -3,6 +3,7 @@ import {
   BANDS,
   FRAME_SAMPLES,
   type Band,
+  type Mode,
   type ServerMessage,
   antennaById,
   bandById,
@@ -16,6 +17,7 @@ import { StationManager } from "../stationManager.js";
 import { PropagationEngine } from "./propagation.js";
 import { SporadicEEngine } from "./sporadicE.js";
 import { BandNoiseGenerator, dbToLinear, modeNoiseGainDb } from "./noise.js";
+import { MultipathFilter, TxBandwidthFilter, applySplatterColorInPlace } from "./audioEffects.js";
 import { int16ToFloat32, float32ToInt16 } from "./pcm.js";
 
 const AUDIBLE_THRESHOLD_DB = -38;
@@ -28,10 +30,17 @@ interface RxNoiseState {
   generator: BandNoiseGenerator;
 }
 
+interface TxBandwidthState {
+  mode: Mode;
+  filter: TxBandwidthFilter;
+}
+
 export class MixerEngine {
   private sporadicE = new SporadicEEngine();
   private propagation = new PropagationEngine(this.sporadicE);
   private noiseByStation = new Map<string, RxNoiseState>();
+  private txBandwidthByStation = new Map<string, TxBandwidthState>();
+  private multipathByPair = new Map<string, MultipathFilter>();
   private tickCount = 0;
 
   constructor(
@@ -43,6 +52,27 @@ export class MixerEngine {
   onDisconnect(id: string): void {
     this.propagation.forget(id);
     this.noiseByStation.delete(id);
+    this.txBandwidthByStation.delete(id);
+    for (const key of [...this.multipathByPair.keys()]) {
+      if (key.startsWith(`${id}:`) || key.endsWith(`:${id}`)) this.multipathByPair.delete(key);
+    }
+  }
+
+  private getTxBandwidthFilter(tx: Station): TxBandwidthFilter {
+    const existing = this.txBandwidthByStation.get(tx.id);
+    if (existing && existing.mode === tx.mode) return existing.filter;
+    const filter = new TxBandwidthFilter(this.sampleRate, tx.mode);
+    this.txBandwidthByStation.set(tx.id, { mode: tx.mode, filter });
+    return filter;
+  }
+
+  private getMultipathFilter(tx: Station, rx: Station): MultipathFilter {
+    const key = `${tx.id}:${rx.id}`;
+    const existing = this.multipathByPair.get(key);
+    if (existing) return existing;
+    const filter = new MultipathFilter(this.sampleRate);
+    this.multipathByPair.set(key, filter);
+    return filter;
   }
 
   private getNoiseGenerator(rx: Station, band: Band): BandNoiseGenerator {
@@ -105,7 +135,9 @@ export class MixerEngine {
           dtMs,
         );
 
-        if (!result.inPassband || result.signalDb < AUDIBLE_THRESHOLD_DB) continue;
+        if ((!result.inPassband && !result.splatterZone) || result.signalDb < AUDIBLE_THRESHOLD_DB) {
+          continue;
+        }
 
         audibleIds.push(tx.id);
         peakSignalDb = Math.max(peakSignalDb, result.signalDb);
@@ -131,6 +163,17 @@ export class MixerEngine {
         const gainDb = Math.min(result.signalDb, 0);
         const gain = dbToLinear(gainDb);
         int16ToFloat32(tx.pendingFrame!, scratch);
+
+        // Band-limit to the transmitter's own mode bandwidth (every listener
+        // hears the same occupied bandwidth regardless of their own filter),
+        // then layer sweeping frequency-selective multipath fading, then
+        // (if this path is arriving as adjacent-channel splatter rather than
+        // cleanly in-passband) a soft-clip to make it read as distorted
+        // bleed-through rather than a clean quiet copy.
+        this.getTxBandwidthFilter(tx).processInPlace(scratch);
+        this.getMultipathFilter(tx, rx).processInPlace(scratch, result.multipathDepth);
+        if (result.splatterZone) applySplatterColorInPlace(scratch);
+
         for (let i = 0; i < output.length; i++) output[i] += scratch[i] * gain;
       }
 

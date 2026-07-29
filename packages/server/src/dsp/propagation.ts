@@ -76,6 +76,10 @@ export interface PropagationResult {
   flutterActive: boolean;
   /** True on the single tick a new flutter episode begins. */
   flutterJustStarted: boolean;
+  /** 0-1: how strongly frequency-selective ("underwater") multipath fading should colour this path's audio. */
+  multipathDepth: number;
+  /** True when the tx is outside the rx's exact passband but close enough to leak in as distorted adjacent-channel splatter. */
+  splatterZone: boolean;
 }
 
 /** Slow mean-reverting random walk (Ornstein-Uhlenbeck) used for QSB fading. */
@@ -173,6 +177,17 @@ export function skywaveDb(distanceKm: number, skipDistanceKm: number): number {
   return base - skipPenalty;
 }
 
+/** How noticeably each mode's demodulator reveals frequency-selective multipath fading (SSB most, FM's capture effect least). */
+const MULTIPATH_SUSCEPTIBILITY: Record<Mode, number> = {
+  USB: 1,
+  LSB: 1,
+  AM: 0.6,
+  CW: 0.15,
+  RTTY: 0.2,
+  DATA: 0.3,
+  FM: 0.05,
+};
+
 const REFERENCE_POWER_WATTS = 100;
 
 /** dB contribution of transmit power relative to a 100W reference (10dB per decade). */
@@ -218,8 +233,15 @@ export class PropagationEngine {
 
   compute(input: PropagationInput, nowMs: number, dtMs: number): PropagationResult {
     const passband = passbandKHz(input.rxMode, input.rxFilterWidth);
-    const inPassband = Math.abs(input.txFreqKHz - input.rxFreqKHz) <= passband / 2;
-    if (!inPassband) {
+    const halfPassband = passband / 2;
+    const offsetKHz = Math.abs(input.txFreqKHz - input.rxFreqKHz);
+    // A signal outside the exact passband isn't just silenced -- a station
+    // close enough in frequency still leaks in as distorted adjacent-channel
+    // splatter, the way a real receiver filter's skirt (or an overdriven tx)
+    // lets nearby signals bleed through. Only genuinely out-of-range signals
+    // are fully silent.
+    const splatterRangeKHz = halfPassband * 3;
+    if (offsetKHz > halfPassband + splatterRangeKHz) {
       return {
         inPassband: false,
         signalDb: -999,
@@ -227,8 +249,15 @@ export class PropagationEngine {
         meteorScatterJustStarted: false,
         flutterActive: false,
         flutterJustStarted: false,
+        multipathDepth: 0,
+        splatterZone: false,
       };
     }
+    const inPassband = offsetKHz <= halfPassband;
+    const splatterZone = !inPassband;
+    const splatterPenaltyDb = splatterZone
+      ? ((offsetKHz - halfPassband) / splatterRangeKHz) * 45
+      : 0;
 
     const key = this.keyFor(input.txId, input.rxId);
     const distanceKm = gridDistanceKm(input.txGrid, input.rxGrid);
@@ -346,15 +375,24 @@ export class PropagationEngine {
       txHeightGainDb +
       rxHeightGainDb +
       powerDb -
-      swrLoss;
+      swrLoss -
+      splatterPenaltyDb;
+
+    // Frequency-selective ("underwater") multipath fading gets more
+    // pronounced the further the signal has travelled, and is far more
+    // audible on some demodulators (SSB) than others (FM's capture effect).
+    const multipathDepth =
+      Math.min(1, distanceKm / 3000) * MULTIPATH_SUSCEPTIBILITY[input.rxMode];
 
     return {
-      inPassband: true,
+      inPassband,
       signalDb,
       meteorScatterActive,
       meteorScatterJustStarted,
       flutterActive,
       flutterJustStarted,
+      multipathDepth,
+      splatterZone,
     };
   }
 
