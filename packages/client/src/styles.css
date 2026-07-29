@@ -196,7 +196,7 @@ button {
 
 .panel__display {
   flex: 1;
-  background: #050503;
+  background: #050503 url("/display-glow.jpg") center / cover no-repeat;
   border: 1px solid #2a2a1a;
   border-radius: 6px;
   padding: 10px 16px;
