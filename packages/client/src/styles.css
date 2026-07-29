@@ -145,20 +145,15 @@ button {
 }
 
 .panel__scope-display {
-  width: 280px;
+  width: 190px;
   background: #050503;
   border: 1px solid #2a2a1a;
   border-radius: 6px;
   padding: 8px;
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 6px;
-}
-.panel__scope-display .waterfall {
-  flex: 1;
-}
-.panel__scope-display .waterfall canvas {
-  height: 70px;
 }
 .swr-bar {
   display: flex;
@@ -199,10 +194,6 @@ button {
   }
 }
 
-.panel__scope-display--big .waterfall canvas {
-  height: 160px;
-}
-
 .panel__display {
   flex: 1;
   background: #050503;
@@ -212,6 +203,23 @@ button {
   font-family: "Courier New", monospace;
   color: #e8b84b;
   min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.panel__display > .panel__display-row,
+.panel__display > .panel__freq-main {
+  align-self: stretch;
+}
+.panel__display .waterfall {
+  align-self: stretch;
+  margin-top: 8px;
+}
+.panel__display .waterfall canvas {
+  height: 70px;
+}
+.panel__display--big-scope .waterfall canvas {
+  height: 160px;
 }
 
 .panel__display-row {
@@ -407,7 +415,7 @@ button {
 .knob-row {
   display: flex;
   gap: 10px;
-  align-items: flex-end;
+  align-items: flex-start;
 }
 
 .panel__center-col {
@@ -941,6 +949,12 @@ button {
   padding: 0;
   overflow-y: auto;
   max-height: 90px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.panel__roster::-webkit-scrollbar,
+.panel__log::-webkit-scrollbar {
+  display: none;
 }
 
 .panel__roster li {
