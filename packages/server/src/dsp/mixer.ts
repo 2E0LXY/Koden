@@ -14,11 +14,12 @@ import {
 } from "@koden/shared";
 import type { Station } from "../stationManager.js";
 import { StationManager } from "../stationManager.js";
-import { PropagationEngine } from "./propagation.js";
+import { PropagationEngine, passbandKHz } from "./propagation.js";
 import { SporadicEEngine } from "./sporadicE.js";
 import { BandNoiseGenerator, dbToLinear, modeNoiseGainDb } from "./noise.js";
 import { MultipathFilter, TxBandwidthFilter, applySplatterColorInPlace } from "./audioEffects.js";
 import { int16ToFloat32, float32ToInt16 } from "./pcm.js";
+import { BEACON_FREQ_KHZ, BEACON_ID, BEACON_SIGNAL_DB, MorseBeacon } from "./beacon.js";
 
 const AUDIBLE_THRESHOLD_DB = -38;
 const METER_EVERY_N_TICKS = 4;
@@ -42,6 +43,7 @@ export class MixerEngine {
   private txBandwidthByStation = new Map<string, TxBandwidthState>();
   private multipathByPair = new Map<string, MultipathFilter>();
   private tickCount = 0;
+  private beacon = new MorseBeacon("KODEN BEACON", 10, 7);
 
   constructor(
     private stations: StationManager,
@@ -102,6 +104,12 @@ export class MixerEngine {
       }
     }
 
+    // Generated once per tick (not per listener) so its internal oscillator
+    // phase and keying clock advance in real time regardless of how many
+    // stations are tuned in to hear it.
+    const beaconFrame = this.beacon.nextFrame(nowMs, this.sampleRate, FRAME_SAMPLES);
+    const beaconGain = dbToLinear(Math.min(BEACON_SIGNAL_DB, 0));
+
     for (const rx of all) {
       const rxBand = findBand(rx.freqKHz);
       if (!rxBand) continue;
@@ -110,6 +118,16 @@ export class MixerEngine {
       const scratch = new Float32Array(FRAME_SAMPLES);
       const audibleIds: string[] = [];
       let peakSignalDb = -Infinity;
+
+      // The test beacon bypasses propagation entirely: a fixed, always-on
+      // reference signal at BEACON_SIGNAL_DB for anyone tuned within their
+      // passband of BEACON_FREQ_KHZ, regardless of distance or band conditions.
+      const beaconOffsetKHz = Math.abs(BEACON_FREQ_KHZ - rx.freqKHz);
+      if (beaconOffsetKHz <= passbandKHz(rx.mode, rx.filterWidth) / 2) {
+        audibleIds.push(BEACON_ID);
+        peakSignalDb = Math.max(peakSignalDb, BEACON_SIGNAL_DB);
+        for (let i = 0; i < output.length; i++) output[i] += beaconFrame[i] * beaconGain;
+      }
 
       for (const tx of transmitters) {
         if (tx.id === rx.id) continue;

@@ -16,6 +16,7 @@ import { StationManager, type Station } from "./stationManager.js";
 import { MixerEngine } from "./dsp/mixer.js";
 import { bufferToInt16Array } from "./dsp/pcm.js";
 import { getSolarConditions, startSolarDataRefresh } from "./dsp/solar.js";
+import { BEACON_CALLSIGN, BEACON_FREQ_KHZ, BEACON_GRID, BEACON_ID } from "./dsp/beacon.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const TICK_MS = 20;
@@ -23,13 +24,25 @@ const SOLAR_BROADCAST_MS = 5 * 60 * 1000;
 
 const stations = new StationManager();
 
+const BEACON_STATION_INFO: StationInfo = {
+  id: BEACON_ID,
+  callsign: BEACON_CALLSIGN,
+  grid: BEACON_GRID,
+  freqKHz: BEACON_FREQ_KHZ,
+  txFreqKHz: BEACON_FREQ_KHZ,
+  mode: "CW",
+  transmitting: true,
+  antenna: DEFAULT_ANTENNA,
+  headingDeg: 0,
+};
+
 function send(ws: WebSocket, message: ServerMessage): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify(message));
 }
 
 function broadcastRoster(): void {
-  const stationInfos: StationInfo[] = stations.all().map(toStationInfo);
+  const stationInfos: StationInfo[] = [...stations.all().map(toStationInfo), BEACON_STATION_INFO];
   for (const s of stations.all()) {
     send(s.ws, { type: "roster", stations: stationInfos });
   }
