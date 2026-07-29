@@ -404,6 +404,23 @@ export function RadioPanel(props: RadioPanelProps) {
             <Knob label="MONI" value={moniLevel} min={0} max={10} onChange={onChangeMoniLevel} />
             <Knob label="VOX DELAY" value={voxDelayKnob} min={0} max={10} onChange={onChangeVoxDelayKnob} />
           </div>
+          <div className="panel__antenna-section">
+            <div className="button-group__label">ANTENNA</div>
+            <div className="antenna-grid">
+              {ANTENNAS.map((a) => (
+                <PanelButton
+                  key={a.id}
+                  small
+                  label={a.name}
+                  active={antenna === a.id}
+                  onClick={() => onSelectAntenna(a.id)}
+                  title={a.description}
+                />
+              ))}
+            </div>
+            <RotatorCompass headingDeg={heading} onChangeHeading={onChangeHeading} disabled={!antennaMeta?.rotatable} />
+          </div>
+
           <div className="panel__jacks">
             <div className="panel__jack">PHONES</div>
             <div className={`panel__jack panel__jack--mic ${transmitting ? "panel__jack--live" : ""}`}>MIC</div>
@@ -503,25 +520,6 @@ export function RadioPanel(props: RadioPanelProps) {
             <Knob label="SQL" value={rx.squelch} min={0} max={10} onChange={(v) => onUpdateRx({ squelch: v })} />
           </div>
         </div>
-      </div>
-
-      <div className="panel__antenna-row">
-        <div className="panel__antenna-row__buttons">
-          <div className="button-group__label">ANTENNA</div>
-          <div className="antenna-grid">
-            {ANTENNAS.map((a) => (
-              <PanelButton
-                key={a.id}
-                small
-                label={a.name}
-                active={antenna === a.id}
-                onClick={() => onSelectAntenna(a.id)}
-                title={a.description}
-              />
-            ))}
-          </div>
-        </div>
-        <RotatorCompass headingDeg={heading} onChangeHeading={onChangeHeading} disabled={!antennaMeta?.rotatable} />
       </div>
 
       <div className="panel__monitor-bay">
