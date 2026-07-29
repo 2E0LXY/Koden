@@ -115,68 +115,72 @@ export function squelchTail(): void {
 }
 
 interface RotorState {
-  osc: OscillatorNode;
-  lfo: OscillatorNode;
+  fundamental: OscillatorNode;
+  harmonic: OscillatorNode;
   noise: AudioBufferSourceNode;
   gain: GainNode;
 }
 let rotor: RotorState | null = null;
 
-/** Start the continuous antenna rotator motor hum. Idempotent -- safe to call while already running. */
+/**
+ * Start the continuous antenna rotator hum -- a steady 60Hz mains-frequency
+ * buzz with a strong 120Hz second harmonic (the classic transformer-core
+ * sound of an AC/DC supply and motor sitting energized), not a wobbling or
+ * revving motor tone. A faint, steady whirr underneath adds motor texture
+ * without disturbing the steady hum.
+ */
 export function startRotor(): void {
   const c = getCtx();
   if (!c || rotor) return;
 
   const gain = c.createGain();
   gain.gain.setValueAtTime(0, c.currentTime);
-  gain.gain.linearRampToValueAtTime(0.14, c.currentTime + 0.08);
+  gain.gain.linearRampToValueAtTime(0.1, c.currentTime + 0.1);
   gain.connect(c.destination);
 
-  const osc = c.createOscillator();
-  osc.type = "sawtooth";
-  osc.frequency.value = 90;
-  const lowpass = c.createBiquadFilter();
-  lowpass.type = "lowpass";
-  lowpass.frequency.value = 500;
-  osc.connect(lowpass).connect(gain);
+  const fundamental = c.createOscillator();
+  fundamental.type = "sine";
+  fundamental.frequency.value = 60;
+  const fundamentalGain = c.createGain();
+  fundamentalGain.gain.value = 0.5;
+  fundamental.connect(fundamentalGain).connect(gain);
 
-  const lfo = c.createOscillator();
-  lfo.type = "sine";
-  lfo.frequency.value = 5.5;
-  const lfoGain = c.createGain();
-  lfoGain.gain.value = 4;
-  lfo.connect(lfoGain).connect(osc.frequency);
+  const harmonic = c.createOscillator();
+  harmonic.type = "sine";
+  harmonic.frequency.value = 120;
+  const harmonicGain = c.createGain();
+  harmonicGain.gain.value = 1;
+  harmonic.connect(harmonicGain).connect(gain);
 
   const noise = noiseBurst(c, 0.5);
   noise.loop = true;
   const noiseFilter = c.createBiquadFilter();
-  noiseFilter.type = "bandpass";
-  noiseFilter.frequency.value = 350;
-  noiseFilter.Q.value = 0.7;
+  noiseFilter.type = "lowpass";
+  noiseFilter.frequency.value = 300;
   const noiseGain = c.createGain();
-  noiseGain.gain.value = 0.3;
+  noiseGain.gain.value = 0.08;
   noise.connect(noiseFilter).connect(noiseGain).connect(gain);
 
-  osc.start();
-  lfo.start();
+  fundamental.start();
+  harmonic.start();
   noise.start();
-  rotor = { osc, lfo, noise, gain };
+  rotor = { fundamental, harmonic, noise, gain };
 }
 
-/** Stop the rotator motor hum with a short fade, if running. */
+/** Stop the rotator hum with a short fade, if running. */
 export function stopRotor(): void {
   if (!rotor || !ctx) {
     rotor = null;
     return;
   }
   const c = ctx;
-  const { osc, lfo, noise, gain } = rotor;
+  const { fundamental, harmonic, noise, gain } = rotor;
   gain.gain.cancelScheduledValues(c.currentTime);
   gain.gain.setValueAtTime(gain.gain.value, c.currentTime);
   gain.gain.linearRampToValueAtTime(0, c.currentTime + 0.15);
   const stopAt = c.currentTime + 0.2;
-  osc.stop(stopAt);
-  lfo.stop(stopAt);
+  fundamental.stop(stopAt);
+  harmonic.stop(stopAt);
   noise.stop(stopAt);
   rotor = null;
 }
