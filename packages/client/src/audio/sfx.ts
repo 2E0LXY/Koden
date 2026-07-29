@@ -114,6 +114,73 @@ export function squelchTail(): void {
   src.stop(c.currentTime + 0.15);
 }
 
+interface RotorState {
+  osc: OscillatorNode;
+  lfo: OscillatorNode;
+  noise: AudioBufferSourceNode;
+  gain: GainNode;
+}
+let rotor: RotorState | null = null;
+
+/** Start the continuous antenna rotator motor hum. Idempotent -- safe to call while already running. */
+export function startRotor(): void {
+  const c = getCtx();
+  if (!c || rotor) return;
+
+  const gain = c.createGain();
+  gain.gain.setValueAtTime(0, c.currentTime);
+  gain.gain.linearRampToValueAtTime(0.14, c.currentTime + 0.08);
+  gain.connect(c.destination);
+
+  const osc = c.createOscillator();
+  osc.type = "sawtooth";
+  osc.frequency.value = 90;
+  const lowpass = c.createBiquadFilter();
+  lowpass.type = "lowpass";
+  lowpass.frequency.value = 500;
+  osc.connect(lowpass).connect(gain);
+
+  const lfo = c.createOscillator();
+  lfo.type = "sine";
+  lfo.frequency.value = 5.5;
+  const lfoGain = c.createGain();
+  lfoGain.gain.value = 4;
+  lfo.connect(lfoGain).connect(osc.frequency);
+
+  const noise = noiseBurst(c, 0.5);
+  noise.loop = true;
+  const noiseFilter = c.createBiquadFilter();
+  noiseFilter.type = "bandpass";
+  noiseFilter.frequency.value = 350;
+  noiseFilter.Q.value = 0.7;
+  const noiseGain = c.createGain();
+  noiseGain.gain.value = 0.3;
+  noise.connect(noiseFilter).connect(noiseGain).connect(gain);
+
+  osc.start();
+  lfo.start();
+  noise.start();
+  rotor = { osc, lfo, noise, gain };
+}
+
+/** Stop the rotator motor hum with a short fade, if running. */
+export function stopRotor(): void {
+  if (!rotor || !ctx) {
+    rotor = null;
+    return;
+  }
+  const c = ctx;
+  const { osc, lfo, noise, gain } = rotor;
+  gain.gain.cancelScheduledValues(c.currentTime);
+  gain.gain.setValueAtTime(gain.gain.value, c.currentTime);
+  gain.gain.linearRampToValueAtTime(0, c.currentTime + 0.15);
+  const stopAt = c.currentTime + 0.2;
+  osc.stop(stopAt);
+  lfo.stop(stopAt);
+  noise.stop(stopAt);
+  rotor = null;
+}
+
 /** Detent tick for rotary knobs while dragging. */
 export function detent(): void {
   const c = getCtx();

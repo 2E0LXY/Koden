@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { startRotor, stopRotor } from "../audio/sfx.js";
 
 interface RotatorCompassProps {
   headingDeg: number;
@@ -26,13 +27,17 @@ export function RotatorCompass({ headingDeg, onChangeHeading, disabled }: Rotato
     if (disabled) return;
     (e.target as Element).setPointerCapture(e.pointerId);
     setDragging(true);
+    startRotor();
     onChangeHeading(Math.round(angleFromEvent(e)));
   };
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!dragging || disabled) return;
     onChangeHeading(Math.round(angleFromEvent(e)));
   };
-  const onPointerUp = () => setDragging(false);
+  const onPointerUp = () => {
+    setDragging(false);
+    stopRotor();
+  };
 
   const rad = (headingDeg * Math.PI) / 180;
   const needleX = 50 + 38 * Math.sin(rad);
