@@ -71,3 +71,32 @@ get a proper trusted certificate instead of the self-signed fallback.
 journalctl -u koden-server -f
 journalctl -u caddy -f
 ```
+
+## Automatic deploys (GitHub Actions)
+
+`.github/workflows/deploy.yml` SSHes into the VPS and re-runs `install.sh`
+(which is idempotent, so this is just "pull latest + rebuild + restart") on
+every push to `main`, or on demand via the Actions tab ("Run workflow").
+
+One-time setup, since this needs credentials only you should hold:
+
+1. Generate a dedicated deploy keypair (don't reuse a personal key):
+   ```bash
+   ssh-keygen -t ed25519 -f koden_deploy_key -N "" -C "koden-deploy@github-actions"
+   ```
+2. Authorize the public half on the VPS (as root):
+   ```bash
+   cat koden_deploy_key.pub >> /root/.ssh/authorized_keys
+   ```
+3. Add three repository secrets under **Settings → Secrets and variables →
+   Actions → New repository secret**:
+   - `VPS_HOST` -- the VPS's IP or hostname
+   - `VPS_USER` -- `root` (install.sh requires root)
+   - `VPS_SSH_KEY` -- the full contents of `koden_deploy_key` (the private
+     half -- never the `.pub` file)
+4. Delete the local `koden_deploy_key` / `koden_deploy_key.pub` files once
+   both are in place; only the copies on the VPS and in GitHub's secret
+   store are needed afterwards.
+
+Once the secrets are set, pushes to `main` deploy automatically -- no
+Claude session or manual SSH required.
