@@ -469,8 +469,6 @@ export function RadioPanel(props: RadioPanelProps) {
               onReset={() => onUpdateRx({ width: 10 })}
             />
             <Knob label="NOTCH" value={rx.notchFreqHz} min={300} max={3000} onChange={(v) => onUpdateRx({ notchFreqHz: v })} />
-          </div>
-          <div className="knob-row">
             <Knob size="small" label="PBT" value={rx.pbtQ} min={0} max={10} onChange={(v) => onUpdateRx({ pbtQ: v })} />
             <Knob size="small" label="NOTCH WIDTH" value={rx.notchWidth} min={0} max={10} onChange={(v) => onUpdateRx({ notchWidth: v })} />
           </div>
@@ -492,8 +490,10 @@ export function RadioPanel(props: RadioPanelProps) {
             <Knob label="SQL" value={rx.squelch} min={0} max={10} onChange={(v) => onUpdateRx({ squelch: v })} />
           </div>
         </div>
+      </div>
 
-        <div className="panel__antenna-col">
+      <div className="panel__antenna-row">
+        <div className="panel__antenna-row__buttons">
           <div className="button-group__label">ANTENNA</div>
           <div className="antenna-grid">
             {ANTENNAS.map((a) => (
@@ -507,8 +507,8 @@ export function RadioPanel(props: RadioPanelProps) {
               />
             ))}
           </div>
-          <RotatorCompass headingDeg={heading} onChangeHeading={onChangeHeading} disabled={!antennaMeta?.rotatable} />
         </div>
+        <RotatorCompass headingDeg={heading} onChangeHeading={onChangeHeading} disabled={!antennaMeta?.rotatable} />
       </div>
 
       <div className="panel__monitor-bay">
