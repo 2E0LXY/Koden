@@ -322,9 +322,7 @@ export function RadioPanel(props: RadioPanelProps) {
         </div>
 
         <div className="panel__nameplate">
-          <span className="panel__brand">KODEN</span>
-          <span className="panel__model">DX-9000</span>
-          <span className="panel__subtitle">MULTIBAND TRANSCEIVER · MADE IN JAPAN</span>
+          <img className="panel__nameplate-img" src="/koden-nameplate.jpg" alt="KODEN DX-9000 - Multiband Transceiver - Made in Japan" />
           <span className={`panel__status panel__status--${connectionStatus}`}>{connectionStatus.toUpperCase()}</span>
         </div>
       </div>
