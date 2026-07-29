@@ -731,7 +731,9 @@ button {
 
 .panel__monitor-bay {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
+  flex: 1;
   margin-top: 16px;
   background: #08080a;
   border: 1px solid #2a2a2e;
@@ -752,7 +754,7 @@ button {
 
 .panel__side-info {
   flex: 1;
-  min-width: 220px;
+  min-width: 160px;
   display: flex;
   flex-direction: column;
   gap: 4px;

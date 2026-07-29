@@ -471,6 +471,52 @@ export function RadioPanel(props: RadioPanelProps) {
               ))}
             </div>
           </div>
+
+          <div className="panel__monitor-bay">
+            <div className="panel__side-info">
+              <div className="panel__roster-title">STATIONS ON FREQ</div>
+              <ul className="panel__roster">
+                {roster.map((s) => (
+                  <li
+                    key={s.id}
+                    className={[
+                      s.id === ownId ? "panel__roster-item--self" : "",
+                      s.transmitting ? "panel__roster-item--tx" : "",
+                      audibleSet.has(s.id) ? "panel__roster-item--audible" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
+                    <span className="panel__roster-call">{s.callsign}</span>
+                    <span className="panel__roster-freq">
+                      {s.txFreqKHz.toFixed(1)} {s.mode}
+                    </span>
+                    {s.transmitting && <span className="panel__roster-tx-dot">TX</span>}
+                  </li>
+                ))}
+                {roster.length === 0 && <li className="panel__roster-empty">No stations connected</li>}
+              </ul>
+            </div>
+            <div className="panel__side-info">
+              <div className="panel__log-title">BAND LOG</div>
+              <ul className="panel__log">
+                {events.map((e, i) => (
+                  <li key={i}>{e}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="panel__side-info panel__side-info--map">
+              <div className="panel__roster-title">STATION MAP{antennaMeta?.rotatable ? " · click to point beam" : ""}</div>
+              <AntennaMap
+                ownGrid={ownGrid}
+                roster={roster}
+                ownId={ownId}
+                headingDeg={heading}
+                showHeading={!!antennaMeta?.rotatable}
+                onPointAt={onPointAt}
+              />
+            </div>
+          </div>
         </div>
 
         <div className="panel__right-col">
@@ -519,52 +565,6 @@ export function RadioPanel(props: RadioPanelProps) {
             <Knob label="RF GAIN" value={rx.rfGain} min={0} max={10} onChange={(v) => onUpdateRx({ rfGain: v })} />
             <Knob label="SQL" value={rx.squelch} min={0} max={10} onChange={(v) => onUpdateRx({ squelch: v })} />
           </div>
-        </div>
-      </div>
-
-      <div className="panel__monitor-bay">
-        <div className="panel__side-info">
-          <div className="panel__roster-title">STATIONS ON FREQ</div>
-          <ul className="panel__roster">
-            {roster.map((s) => (
-              <li
-                key={s.id}
-                className={[
-                  s.id === ownId ? "panel__roster-item--self" : "",
-                  s.transmitting ? "panel__roster-item--tx" : "",
-                  audibleSet.has(s.id) ? "panel__roster-item--audible" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-              >
-                <span className="panel__roster-call">{s.callsign}</span>
-                <span className="panel__roster-freq">
-                  {s.txFreqKHz.toFixed(1)} {s.mode}
-                </span>
-                {s.transmitting && <span className="panel__roster-tx-dot">TX</span>}
-              </li>
-            ))}
-            {roster.length === 0 && <li className="panel__roster-empty">No stations connected</li>}
-          </ul>
-        </div>
-        <div className="panel__side-info">
-          <div className="panel__log-title">BAND LOG</div>
-          <ul className="panel__log">
-            {events.map((e, i) => (
-              <li key={i}>{e}</li>
-            ))}
-          </ul>
-        </div>
-        <div className="panel__side-info panel__side-info--map">
-          <div className="panel__roster-title">STATION MAP{antennaMeta?.rotatable ? " · click to point beam" : ""}</div>
-          <AntennaMap
-            ownGrid={ownGrid}
-            roster={roster}
-            ownId={ownId}
-            headingDeg={heading}
-            showHeading={!!antennaMeta?.rotatable}
-            onPointAt={onPointAt}
-          />
         </div>
       </div>
 

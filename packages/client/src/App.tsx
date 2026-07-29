@@ -12,7 +12,7 @@ import {
 } from "@koden/shared";
 import { KodenSocket, type ConnectionStatus } from "./net/wsClient.js";
 import { AudioEngine, type AgcMode, type ReceiveParams } from "./audio/engine.js";
-import { beep, detent, power, relay, setSfxEnabled, squelchTail } from "./audio/sfx.js";
+import { beep, detent, power, relay, setSfxEnabled, squelchTail, startRotor, stopRotor } from "./audio/sfx.js";
 import { JoinForm } from "./ui/JoinForm.js";
 import { RadioPanel } from "./ui/RadioPanel.js";
 
@@ -117,6 +117,18 @@ export function App() {
 
   const [antenna, setAntennaState] = useState<AntennaId>("dipole");
   const [heading, setHeadingState] = useState(0);
+  const headingRef = useRef(heading);
+  useEffect(() => {
+    headingRef.current = heading;
+  }, [heading]);
+  const slewAnimRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (slewAnimRef.current !== null) cancelAnimationFrame(slewAnimRef.current);
+      stopRotor();
+    },
+    [],
+  );
   const [ownGrid, setOwnGrid] = useState("");
   const [pttHeld, setPttHeld] = useState(false);
 
@@ -515,15 +527,46 @@ export function App() {
     setHeadingState(((deg % 360) + 360) % 360);
   }, []);
 
+  /** Animate the rotator heading to `targetDeg`, like a real rotator turning, with a motor hum for the duration. */
+  const slewHeadingTo = useCallback((targetDeg: number) => {
+    if (slewAnimRef.current !== null) {
+      cancelAnimationFrame(slewAnimRef.current);
+      slewAnimRef.current = null;
+      stopRotor();
+    }
+    const from = headingRef.current;
+    const delta = ((targetDeg - from + 540) % 360) - 180;
+    if (Math.abs(delta) < 0.5) return;
+
+    const DEG_PER_SEC = 45;
+    const durationMs = (Math.abs(delta) / DEG_PER_SEC) * 1000;
+    const startTime = performance.now();
+    detent();
+    startRotor();
+
+    const step = (now: number) => {
+      const t = Math.min(1, (now - startTime) / durationMs);
+      const deg = ((from + delta * t) % 360 + 360) % 360;
+      setHeadingState(deg);
+      headingRef.current = deg;
+      if (t < 1) {
+        slewAnimRef.current = requestAnimationFrame(step);
+      } else {
+        slewAnimRef.current = null;
+        stopRotor();
+      }
+    };
+    slewAnimRef.current = requestAnimationFrame(step);
+  }, []);
+
   /** Slew the rotator to point at another station on the map, if the current antenna is a beam. */
   const onPointAt = useCallback(
     (targetGrid: string) => {
       const ant = antennaById(antenna);
       if (!ant?.rotatable || !isValidGrid(ownGrid) || !isValidGrid(targetGrid)) return;
-      setHeadingState(Math.round(gridBearingDeg(ownGrid, targetGrid)));
-      detent();
+      slewHeadingTo(Math.round(gridBearingDeg(ownGrid, targetGrid)));
     },
-    [antenna, ownGrid],
+    [antenna, ownGrid, slewHeadingTo],
   );
 
   const onPttDown = useCallback(() => setPttHeld(true), []);
