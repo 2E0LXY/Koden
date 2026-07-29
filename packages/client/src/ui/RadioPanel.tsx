@@ -288,13 +288,12 @@ export function RadioPanel(props: RadioPanelProps) {
         </div>
 
         <div className="panel__dual-display">
-          <div className={`panel__scope-display ${mScope ? "panel__scope-display--big" : ""}`}>
+          <div className="panel__scope-display">
             <SMeter signalDb={signalDb} />
             <SwrBar swr={swr} tuning={tunerActive} />
-            <Waterfall signalDb={signalDb} active={transmitting} />
           </div>
 
-          <div className="panel__display">
+          <div className={`panel__display ${mScope ? "panel__display--big-scope" : ""}`}>
             <div className="panel__display-row">
               <span className={`panel__indicator panel__indicator--tx ${transmitting ? "panel__indicator--on" : ""}`}>TX</span>
               <span className={`panel__indicator panel__indicator--rx ${!transmitting ? "panel__indicator--on" : ""}`}>RX</span>
@@ -318,6 +317,7 @@ export function RadioPanel(props: RadioPanelProps) {
               <span>{split ? "SPLIT" : ""}</span>
               <span>{antennaLabel}</span>
             </div>
+            <Waterfall signalDb={signalDb} active={transmitting} />
           </div>
         </div>
 
