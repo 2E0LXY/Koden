@@ -277,29 +277,20 @@ button {
 
 .panel__nameplate {
   width: 260px;
-  background: linear-gradient(160deg, #e9d9a0, #b89544 55%, #8a6c2c);
+  background: #1a1a1c;
   border: 2px solid #6b5420;
   border-radius: 6px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  color: #2a2110;
-  padding: 6px;
-  gap: 2px;
+  overflow: hidden;
+  padding: 4px;
+  gap: 4px;
 }
-.panel__brand {
-  font-weight: 800;
-  font-size: 22px;
-  letter-spacing: 2px;
-}
-.panel__model {
-  font-weight: 700;
-  font-size: 15px;
-}
-.panel__subtitle {
-  font-size: 9px;
-  letter-spacing: 1px;
+.panel__nameplate-img {
+  width: 100%;
+  border-radius: 3px;
+  display: block;
 }
 .panel__status {
   margin-top: 4px;
