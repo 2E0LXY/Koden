@@ -8,7 +8,7 @@ import {
   antennaById,
   bandById,
   daylightFactor,
-  findBand,
+  nearestBand,
   gridToLatLon,
   localSolarHour,
 } from "@koden/shared";
@@ -79,7 +79,12 @@ export class MixerEngine {
 
   private getNoiseGenerator(rx: Station, band: Band): BandNoiseGenerator {
     const existing = this.noiseByStation.get(rx.id);
-    if (existing && existing.bandId === band.id && existing.generator.matches(rx.mode)) {
+    if (existing && existing.bandId === band.id) {
+      // Retune in place rather than rebuilding -- a fresh generator would
+      // reset the pink noise filter to silence (an audible warm-up
+      // transient) and re-roll every random timer, making the same band
+      // sound inconsistent every time the mode changes.
+      if (!existing.generator.matches(rx.mode)) existing.generator.retune(rx.mode);
       return existing.generator;
     }
     const generator = new BandNoiseGenerator(band, this.sampleRate, rx.mode, rx.filterWidth);
@@ -111,8 +116,10 @@ export class MixerEngine {
     const beaconGain = dbToLinear(Math.min(BEACON_SIGNAL_DB, 0));
 
     for (const rx of all) {
-      const rxBand = findBand(rx.freqKHz);
-      if (!rxBand) continue;
+      // Even tuned into a gap between amateur allocations, a real receiver
+      // still hears *something* rather than dead silence -- fall back to
+      // the nearest band's characteristics instead of skipping entirely.
+      const rxBand = nearestBand(rx.freqKHz);
 
       const output = new Float32Array(FRAME_SAMPLES);
       const scratch = new Float32Array(FRAME_SAMPLES);

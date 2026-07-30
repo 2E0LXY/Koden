@@ -211,15 +211,25 @@ export class WanderingTone {
     private maxHz: number,
     private amplitude: number,
     private driftHzPerSec: number,
+    /** 0..1, picks the starting pitch deterministically instead of fully at random, so the same band/mode sounds like the same station each time instead of a new random pitch on every switch. */
+    startFrac = Math.random(),
   ) {
-    this.freqHz = minHz + Math.random() * (maxHz - minHz);
+    this.freqHz = minHz + startFrac * (maxHz - minHz);
     this.targetHz = this.freqHz;
   }
 
   fillAdd(out: Float32Array): void {
     const maxStep = this.driftHzPerSec / this.sampleRate;
     for (let i = 0; i < out.length; i++) {
-      if (Math.random() < 0.0003) this.targetHz = this.minHz + Math.random() * (this.maxHz - this.minHz);
+      // Wander gently around wherever it currently sits rather than
+      // occasionally jumping to a wholly new pitch anywhere in the range --
+      // recognizably "the same" whistle wobbling, not a different random
+      // tone every time.
+      if (Math.random() < 0.0003) {
+        const localSpan = (this.maxHz - this.minHz) * 0.25;
+        const next = this.freqHz + (Math.random() - 0.5) * localSpan;
+        this.targetHz = Math.max(this.minHz, Math.min(this.maxHz, next));
+      }
       const delta = this.targetHz - this.freqHz;
       this.freqHz += Math.sign(delta) * Math.min(Math.abs(delta), maxStep);
       out[i] += Math.sin(this.phase) * this.amplitude;
@@ -287,6 +297,16 @@ export function modeNoiseGainDb(mode: Mode, filterWidth: FilterWidth): number {
   return Math.max(-9, Math.min(8, gain));
 }
 
+/** Deterministic 0..1 hash of a string, used to pick "random" starting values that stay the same for the same band/mode instead of differing on every retune. */
+function hashFrac(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) / 4294967296;
+}
+
 /** Per-band, per-mode ambient noise generator combining pink noise, crackle, and birdies. */
 export class BandNoiseGenerator {
   private pink = new PinkNoise();
@@ -296,15 +316,19 @@ export class BandNoiseGenerator {
   private ignition: IgnitionBuzz;
   private brightener: Biquad | null = null;
   private shaper: Biquad | null = null;
+  private shaperHighpass: Biquad | null = null;
   private shaperMakeupGain = 1;
   private baseCracklesPerSecond: number;
+  private bandId: string;
 
   constructor(
     band: Band,
-    sampleRate: number,
+    private sampleRate: number,
     private mode: Mode,
     _filterWidth: FilterWidth,
   ) {
+    this.bandId = band.id;
+
     // Lower bands pick up far more atmospheric/lightning static.
     const lowBandBoost = Math.max(0, (7000 - band.rangeKHz[0]) / 7000);
     this.baseCracklesPerSecond = 0.5 + lowBandBoost * 6;
@@ -325,27 +349,67 @@ export class BandNoiseGenerator {
       new Birdie(sampleRate * 0.27, sampleRate, 0.01),
     ];
 
-    // CW is heard through a narrow filter centered on the sidetone pitch,
-    // so its noise is thinner than broadband SSB hiss -- but the Q has to
-    // stay low enough that it still sounds like textured (if narrow) hiss
-    // rather than a pure ringing tone. AM's wider, symmetric double-sideband
-    // detector tends to sound a little duller/warmer than a sharp SSB
-    // filter, and picks up the classic wandering heterodyne whistle from a
-    // nearby channel's carrier beating against your own as you tune near
-    // it. FM's discriminator has no such warmth -- unsquelched FM is a
-    // loud, bright, full-bandwidth hiss (closer to broadcast "TV static"
-    // than SSB's textured pink noise), so it gets a presence boost instead
-    // of a lowpass.
+    this.configureForMode(mode);
+  }
+
+  /**
+   * (Re)configure just the mode-dependent shaping in place, leaving the
+   * pink noise filter, crackle timing, birdies, and ignition buzz running
+   * uninterrupted. Switching modes used to tear down and rebuild the whole
+   * generator from scratch, which reset the pink noise filter's internal
+   * state to zero (an audible warm-up transient) and re-rolled every random
+   * timer, so the same band could sound noticeably different -- and the
+   * AM heterodyne whistle picked a brand new random pitch -- every single
+   * time you switched modes.
+   *
+   * CW is heard through a narrow filter centered on the sidetone pitch, so
+   * its noise is thinner than broadband SSB hiss -- but the Q has to stay
+   * low enough that it still sounds like textured (if narrow) hiss rather
+   * than a pure ringing tone. USB/LSB's detector only ever passes a real
+   * SSB filter's ~300-2700Hz window (same band-limiting the actual voice
+   * audio gets elsewhere), giving their noise its characteristic narrower,
+   * "toppy" hiss -- distinct from FM's full-bandwidth brightness below.
+   * AM's wider, symmetric double-sideband detector tends to sound a little
+   * duller/warmer than that sharp SSB filter, and picks up the classic
+   * wandering heterodyne whistle from a nearby channel's carrier beating
+   * against your own as you tune near it -- seeded from the band so it
+   * starts at the same recognizable pitch each time rather than a new
+   * random one. FM's discriminator has no such warmth -- unsquelched FM is
+   * a loud, bright, full-bandwidth hiss (closer to broadcast "TV static"
+   * than SSB's textured pink noise), so it gets a presence boost instead
+   * of a lowpass.
+   */
+  private configureForMode(mode: Mode): void {
+    this.mode = mode;
+    this.shaper = null;
+    this.shaperHighpass = null;
+    this.brightener = null;
+    this.shaperMakeupGain = 1;
+    if (!(mode === "AM" && this.heterodyne)) this.heterodyne = null;
+
     if (mode === "CW" || mode === "RTTY") {
-      this.shaper = Biquad.bandpass(sampleRate, 700, 0.9);
+      this.shaper = Biquad.bandpass(this.sampleRate, 700, 0.9);
       this.shaperMakeupGain = 2.6; // narrow bandpass throws away most of the energy
+    } else if (mode === "USB" || mode === "LSB" || mode === "DATA") {
+      this.shaperHighpass = Biquad.highpass(this.sampleRate, 300, 0.7);
+      this.shaper = Biquad.lowpass(this.sampleRate, 2700, 0.7);
+      this.shaperMakeupGain = 1.6;
     } else if (mode === "AM") {
-      this.shaper = Biquad.lowpass(sampleRate, 3200, 0.7);
+      this.shaper = Biquad.lowpass(this.sampleRate, 3200, 0.7);
       this.shaperMakeupGain = 1.3;
-      this.heterodyne = new WanderingTone(sampleRate, 800, 2200, 0.03, 40);
+      if (!this.heterodyne) {
+        const startFrac = hashFrac(this.bandId);
+        this.heterodyne = new WanderingTone(this.sampleRate, 800, 2200, 0.03, 40, startFrac);
+      }
     } else if (mode === "FM") {
-      this.brightener = Biquad.highpass(sampleRate, 250, 0.7);
+      this.brightener = Biquad.highpass(this.sampleRate, 250, 0.7);
     }
+  }
+
+  /** Switch this generator to a new mode in place -- see configureForMode for why this matters. */
+  retune(mode: Mode): void {
+    if (this.mode === mode) return;
+    this.configureForMode(mode);
   }
 
   /** True if this generator can keep serving the given mode/filter without being rebuilt. */
@@ -373,6 +437,7 @@ export class BandNoiseGenerator {
     // final noiseFloorDb-derived gain has to apply after that, to the whole
     // combined signal, so accents stay proportional to the ambient floor
     // instead of sitting at a fixed loudness regardless of band/mode.
+    if (this.shaperHighpass) this.shaperHighpass.processInPlace(out);
     if (this.shaper) this.shaper.processInPlace(out);
     if (this.brightener) this.brightener.processInPlace(out);
 
