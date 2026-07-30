@@ -194,6 +194,84 @@ export class Birdie {
   }
 }
 
+/**
+ * A tone whose pitch wanders slowly and randomly within a range -- the
+ * classic AM-dial heterodyne whistle from a nearby channel's carrier
+ * beating against your own as you tune near it, or a general unstable
+ * interference wobble (unlike Birdie's perfectly fixed pitch).
+ */
+export class WanderingTone {
+  private phase = 0;
+  private freqHz: number;
+  private targetHz: number;
+
+  constructor(
+    private sampleRate: number,
+    private minHz: number,
+    private maxHz: number,
+    private amplitude: number,
+    private driftHzPerSec: number,
+  ) {
+    this.freqHz = minHz + Math.random() * (maxHz - minHz);
+    this.targetHz = this.freqHz;
+  }
+
+  fillAdd(out: Float32Array): void {
+    const maxStep = this.driftHzPerSec / this.sampleRate;
+    for (let i = 0; i < out.length; i++) {
+      if (Math.random() < 0.0003) this.targetHz = this.minHz + Math.random() * (this.maxHz - this.minHz);
+      const delta = this.targetHz - this.freqHz;
+      this.freqHz += Math.sign(delta) * Math.min(Math.abs(delta), maxStep);
+      out[i] += Math.sin(this.phase) * this.amplitude;
+      this.phase += (2 * Math.PI * this.freqHz) / this.sampleRate;
+      if (this.phase > Math.PI * 2) this.phase -= Math.PI * 2;
+    }
+  }
+}
+
+/**
+ * Rhythmic power-line/ignition-style interference: a fast, regular train of
+ * harsh clicks, unlike AtmosphericCrackle's randomly-timed atmospheric
+ * crashes -- the "jackhammer" buzz of nearby electrical noise picked up on
+ * HF. Arrives in occasional bursts rather than continuously.
+ */
+export class IgnitionBuzz {
+  private phaseSamples = 0;
+  private periodSamples: number;
+  private burstRemaining = 0;
+  private nextCheckSamples: number;
+
+  constructor(
+    private sampleRate: number,
+    pulsesPerSecond: number,
+    private intensity: number,
+  ) {
+    this.periodSamples = Math.round(sampleRate / pulsesPerSecond);
+    this.nextCheckSamples = Math.round(sampleRate * (2 + Math.random() * 6));
+  }
+
+  fillAdd(out: Float32Array): void {
+    for (let i = 0; i < out.length; i++) {
+      if (this.burstRemaining > 0) {
+        this.burstRemaining--;
+      } else if (this.nextCheckSamples <= 0) {
+        this.nextCheckSamples = Math.round(this.sampleRate * (2 + Math.random() * 6));
+        if (Math.random() < 0.25) this.burstRemaining = Math.round(this.sampleRate * (0.3 + Math.random() * 0.8));
+      } else {
+        this.nextCheckSamples--;
+      }
+
+      if (this.burstRemaining > 0) {
+        this.phaseSamples = (this.phaseSamples + 1) % this.periodSamples;
+        if (this.phaseSamples < 6) {
+          const t = this.phaseSamples / 6;
+          out[i] += (1 - t) * this.intensity * (Math.random() * 2 - 1);
+        }
+      }
+    }
+  }
+}
+
 /** Bandwidth of a "reference" SSB receiver, kHz -- the band noise floors in bands.ts are tuned around this. */
 const REFERENCE_BANDWIDTH_KHZ = 3;
 
@@ -214,6 +292,9 @@ export class BandNoiseGenerator {
   private pink = new PinkNoise();
   private crackle: AtmosphericCrackle;
   private birdies: Birdie[];
+  private heterodyne: WanderingTone | null = null;
+  private ignition: IgnitionBuzz;
+  private brightener: Biquad | null = null;
   private shaper: Biquad | null = null;
   private shaperMakeupGain = 1;
   private baseCracklesPerSecond: number;
@@ -230,6 +311,11 @@ export class BandNoiseGenerator {
     const crackleIntensity = 0.15 + lowBandBoost * 0.35;
     this.crackle = new AtmosphericCrackle(sampleRate, this.baseCracklesPerSecond, crackleIntensity);
 
+    // Power-line/ignition-style buzz is a local-noise phenomenon, not an
+    // atmospheric one, but it's still worse on the lower bands in practice
+    // (mains harmonics and ignition noise fall off with frequency).
+    this.ignition = new IgnitionBuzz(sampleRate, 100 + Math.random() * 20, 0.5 + lowBandBoost * 0.3);
+
     // A couple of faint fixed birdies scattered across the band, as if from
     // internal oscillator harmonics -- cosmetic realism, not tied to any tx.
     // Kept small relative to the pink noise's own pre-gain amplitude (~0.1)
@@ -243,13 +329,22 @@ export class BandNoiseGenerator {
     // so its noise is thinner than broadband SSB hiss -- but the Q has to
     // stay low enough that it still sounds like textured (if narrow) hiss
     // rather than a pure ringing tone. AM's wider, symmetric double-sideband
-    // detector tends to sound a little duller/warmer than a sharp SSB filter.
+    // detector tends to sound a little duller/warmer than a sharp SSB
+    // filter, and picks up the classic wandering heterodyne whistle from a
+    // nearby channel's carrier beating against your own as you tune near
+    // it. FM's discriminator has no such warmth -- unsquelched FM is a
+    // loud, bright, full-bandwidth hiss (closer to broadcast "TV static"
+    // than SSB's textured pink noise), so it gets a presence boost instead
+    // of a lowpass.
     if (mode === "CW" || mode === "RTTY") {
       this.shaper = Biquad.bandpass(sampleRate, 700, 0.9);
       this.shaperMakeupGain = 2.6; // narrow bandpass throws away most of the energy
     } else if (mode === "AM") {
       this.shaper = Biquad.lowpass(sampleRate, 3200, 0.7);
       this.shaperMakeupGain = 1.3;
+      this.heterodyne = new WanderingTone(sampleRate, 800, 2200, 0.03, 40);
+    } else if (mode === "FM") {
+      this.brightener = Biquad.highpass(sampleRate, 250, 0.7);
     }
   }
 
@@ -269,7 +364,9 @@ export class BandNoiseGenerator {
 
     this.crackle.setRate(this.baseCracklesPerSecond * crackleRateMultiplier);
     this.crackle.fillAdd(out);
+    this.ignition.fillAdd(out);
     for (const b of this.birdies) b.fillAdd(out);
+    if (this.heterodyne) this.heterodyne.fillAdd(out);
 
     // The mode filter shapes *everything* reaching the ear (atmospheric
     // noise, crackle, birdies alike), not just the raw pink noise -- and the
@@ -277,6 +374,7 @@ export class BandNoiseGenerator {
     // combined signal, so accents stay proportional to the ambient floor
     // instead of sitting at a fixed loudness regardless of band/mode.
     if (this.shaper) this.shaper.processInPlace(out);
+    if (this.brightener) this.brightener.processInPlace(out);
 
     const gain = dbToLinear(noiseFloorDb) * this.shaperMakeupGain;
     for (let i = 0; i < out.length; i++) out[i] *= gain;
