@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   findBand,
   antennaById,
@@ -15,6 +15,20 @@ import { AudioEngine, type AgcMode, type ReceiveParams } from "./audio/engine.js
 import { beep, detent, power, relay, setSfxEnabled, squelchTail, startRotor, stopRotor } from "./audio/sfx.js";
 import { JoinForm } from "./ui/JoinForm.js";
 import { RadioPanel } from "./ui/RadioPanel.js";
+
+/**
+ * A real S-meter reads the receiver's actual front-end sensitivity, not just
+ * the raw over-the-air signal -- backing off RF GAIN, engaging ATT, or
+ * bypassing the preamp (IPO) all desensitize the receiver and pull the
+ * needle down, same as they quiet the audio. Mirrors the dB deltas used for
+ * AudioEngine's rfGainNode so what you see and what you hear agree.
+ */
+function rfSensitivityAdjustDb(rfGain: number, attEnabled: boolean, ipoEnabled: boolean): number {
+  const gainDb = 20 * Math.log10(Math.max(0.001, rfGain / 10));
+  const attDb = attEnabled ? -9 : 0;
+  const ipoDb = ipoEnabled ? -2 : 2;
+  return gainDb + attDb + ipoDb;
+}
 
 const WS_URL = import.meta.env.VITE_SERVER_WS_URL ?? "ws://localhost:8787/ws";
 const MAX_EVENTS = 12;
@@ -245,7 +259,12 @@ export function App() {
             break;
         }
       },
-      onAudioFrame: (frame) => audioEngine.playFrame(frame),
+      // Real transceivers are simplex -- the receiver is deaf while keyed.
+      // (Sidetone/monitor audio, if enabled, is a separate path handled by
+      // AudioEngine.setMonitor, not this receive playback.)
+      onAudioFrame: (frame) => {
+        if (!pttRef.current) audioEngine.playFrame(frame);
+      },
     });
     socketRef.current = socket;
     socket.connect();
@@ -316,6 +335,15 @@ export function App() {
       if (audioEngineRef.current) squelchTail();
     }
   }, [meter.sMeterDb, meter.noiseFloorDb, rx.squelch, tunerActive]);
+
+  // What the S-meter/waterfall actually display: the raw over-the-air
+  // signal adjusted for the receiver's own front-end sensitivity, so RF
+  // GAIN/ATT/IPO visibly move the needle the same way they change what you
+  // hear, instead of only affecting local audio loudness invisibly.
+  const displaySignalDb = useMemo(
+    () => meter.sMeterDb + rfSensitivityAdjustDb(rx.rfGain, rx.attEnabled, rx.ipoEnabled),
+    [meter.sMeterDb, rx.rfGain, rx.attEnabled, rx.ipoEnabled],
+  );
 
   // Push transmit state to the server whenever MOX or VOX-triggered state changes.
   const prevTransmittingRef = useRef(false);
@@ -525,10 +553,6 @@ export function App() {
     beep(750, 60);
   }, []);
 
-  const onChangeHeading = useCallback((deg: number) => {
-    setHeadingState(((deg % 360) + 360) % 360);
-  }, []);
-
   /** Animate the rotator heading to `targetDeg`, like a real rotator turning, with a motor hum for the duration. */
   const slewHeadingTo = useCallback((targetDeg: number) => {
     if (slewAnimRef.current !== null) {
@@ -560,6 +584,15 @@ export function App() {
     };
     slewAnimRef.current = requestAnimationFrame(step);
   }, []);
+
+  // Dragging the compass commands a new heading the same way clicking a
+  // station on the map does -- the rotator turns there at its real turn
+  // rate rather than snapping instantly, so a second drag right after an
+  // auto-point doesn't visually jump.
+  const onChangeHeading = useCallback(
+    (deg: number) => slewHeadingTo(((deg % 360) + 360) % 360),
+    [slewHeadingTo],
+  );
 
   /** Slew the rotator to point at another station on the map, if the current antenna is a beam. */
   const onPointAt = useCallback(
@@ -751,7 +784,7 @@ export function App() {
       onChangeKeySpeed={setKeySpeed}
       scanning={scanning}
       onToggleScan={() => setScanning((s) => !s)}
-      signalDb={meter.sMeterDb}
+      signalDb={displaySignalDb}
       audibleStationIds={meter.audibleStationIds}
       roster={roster}
       ownId={ownId}
