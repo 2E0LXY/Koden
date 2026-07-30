@@ -2,8 +2,8 @@ export const BEACON_ID = "beacon";
 export const BEACON_CALLSIGN = "BEACON";
 export const BEACON_GRID = "IO91WM";
 export const BEACON_FREQ_KHZ = 7000;
-/** Fixed signal strength (this app's internal dB scale, not real dBm) -- comfortably above the -38dB audible-threshold floor, landing as a weak-but-reliably-copyable "S3-ish" reference signal, independent of any station's distance/propagation. */
-export const BEACON_SIGNAL_DB = -34;
+/** Fixed signal strength (this app's internal dB scale, not real dBm) -- a strong, easily-copyable reference tone well clear of the noise floor, independent of any station's distance/propagation. */
+export const BEACON_SIGNAL_DB = -12;
 
 const MORSE: Record<string, string> = {
   A: ".-",

@@ -4,6 +4,8 @@ import type { TuneStep } from "../App.js";
 import { click } from "../audio/sfx.js";
 import { SMeter } from "./SMeter.js";
 import { SwrBar } from "./SwrBar.js";
+import { CompMeter } from "./CompMeter.js";
+import { WattMeter } from "./WattMeter.js";
 import { Waterfall } from "./Waterfall.js";
 import { VfoDial } from "./VfoDial.js";
 import { Knob } from "./Knob.js";
@@ -16,6 +18,13 @@ interface VfoDisplay {
   freqKHz: number;
   mode: Mode;
 }
+
+/** Labels for the server-link badge -- distinct from any band-condition wording, since "OPEN" alone reads as a band-opening report rather than a WebSocket state. */
+const CONNECTION_LABELS: Record<string, string> = {
+  open: "LINK: ONLINE",
+  connecting: "LINK: CONNECTING",
+  closed: "LINK: OFFLINE",
+};
 
 interface RadioPanelProps {
   callsign: string;
@@ -291,6 +300,8 @@ export function RadioPanel(props: RadioPanelProps) {
           <div className="panel__scope-display">
             <SMeter signalDb={signalDb} />
             <SwrBar swr={swr} tuning={tunerActive} />
+            <CompMeter enabled={compEnabled} level={procLevel} />
+            <WattMeter watts={txPower * 10} transmitting={transmitting} />
           </div>
 
           <div className={`panel__display ${mScope ? "panel__display--big-scope" : ""}`}>
@@ -323,7 +334,12 @@ export function RadioPanel(props: RadioPanelProps) {
 
         <div className="panel__nameplate">
           <img className="panel__nameplate-img" src="/koden-nameplate.jpg" alt="KODEN DX-9000 - Multiband Transceiver - Made in Japan" />
-          <span className={`panel__status panel__status--${connectionStatus}`}>{connectionStatus.toUpperCase()}</span>
+          <span
+            className={`panel__status panel__status--${connectionStatus}`}
+            title="Connection to the Koden server -- not a band condition"
+          >
+            {CONNECTION_LABELS[connectionStatus] ?? connectionStatus.toUpperCase()}
+          </span>
         </div>
       </div>
 
