@@ -172,6 +172,30 @@ export function findBand(freqKHz: number): Band | undefined {
   );
 }
 
+/**
+ * Like findBand, but never returns undefined -- falls back to whichever
+ * band's range is closest when tuned into a gap between amateur
+ * allocations. A real receiver still picks up *something* (broadcast
+ * stations, other services, at minimum residual noise) everywhere across
+ * the RF spectrum; it doesn't go dead silent between ham bands the way
+ * skipping noise generation entirely would.
+ */
+export function nearestBand(freqKHz: number): Band {
+  const exact = findBand(freqKHz);
+  if (exact) return exact;
+  let best = BANDS[0];
+  let bestDistance = Infinity;
+  for (const b of BANDS) {
+    const distance =
+      freqKHz < b.rangeKHz[0] ? b.rangeKHz[0] - freqKHz : freqKHz - b.rangeKHz[1];
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = b;
+    }
+  }
+  return best;
+}
+
 export function bandById(id: string): Band | undefined {
   return BANDS.find((b) => b.id === id);
 }
