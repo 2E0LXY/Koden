@@ -13,7 +13,7 @@ export function WattMeter({ watts, transmitting }: WattMeterProps) {
       label="WATT"
       value={normalized}
       colorAt={(pos) => (pos < 0.7 ? "#28d17c" : pos < 0.9 ? "#e8c73a" : "#e14b3a")}
-      readout={transmitting ? `${watts}W` : "0W"}
+      readout={transmitting ? `${Math.round(watts)}W` : "0W"}
     />
   );
 }
