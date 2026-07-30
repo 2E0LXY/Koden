@@ -4,10 +4,13 @@ interface WaterfallStation {
   id: string;
   freqKHz: number;
   transmitting: boolean;
+  /** Whether the mixer actually reported this station as audible right now. */
+  audible: boolean;
 }
 
 interface WaterfallProps {
   signalDb: number;
+  noiseFloorDb: number;
   active: boolean;
   centerFreqKHz?: number;
   spanKHz?: number;
@@ -20,41 +23,33 @@ const SCOPE_HEIGHT = 26;
 const FALL_TOP = SCOPE_HEIGHT + 2;
 const FALL_HEIGHT = HEIGHT - FALL_TOP;
 
-interface Blip {
-  x: number;
-  driftPerSec: number;
-  spread: number;
-  baseIntensity: number;
-  phase: number;
-}
-
-function makeBlip(): Blip {
-  return {
-    x: Math.random() * WIDTH,
-    driftPerSec: (Math.random() - 0.5) * 3,
-    spread: 3 + Math.random() * 7,
-    baseIntensity: 0.2 + Math.random() * 0.45,
-    phase: Math.random() * Math.PI * 2,
-  };
-}
-
-const NUM_AMBIENT_BLIPS = 8;
-
 /**
- * A stylized panadapter/waterfall combo, styled after a typical HF
- * transceiver's blue-purple spectrum display: a live scope trace on top,
- * a scrolling waterfall below, and a red tuning line at centre. It isn't a
- * real FFT of the audio (the server doesn't ship per-bin spectrum data) --
- * the ambient "band activity" blips are decorative, but any other station
- * on the roster is plotted at its real frequency offset from centre.
+ * A stylized panadapter/waterfall combo styled after a typical HF
+ * transceiver's blue-purple spectrum display: a live scope trace on top, a
+ * scrolling waterfall below, and a red tuning line at centre. There's no
+ * real per-bin FFT to draw (the server doesn't ship one) -- every bump on
+ * screen instead comes from real data: the actual noise floor level, the
+ * real signal you're receiving at the tuned frequency, and every other
+ * roster station plotted at its real frequency offset, sized by whether
+ * the mixer actually reports it as audible right now. The only randomness
+ * is a faint per-pixel dither for texture, not fabricated activity.
  */
-export function Waterfall({ signalDb, active, centerFreqKHz = 0, spanKHz = 6, stations = [] }: WaterfallProps) {
+export function Waterfall({
+  signalDb,
+  noiseFloorDb,
+  active,
+  centerFreqKHz = 0,
+  spanKHz = 6,
+  stations = [],
+}: WaterfallProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const signalRef = useRef(signalDb);
+  const noiseFloorRef = useRef(noiseFloorDb);
   const activeRef = useRef(active);
   const centerRef = useRef(centerFreqKHz);
   const stationsRef = useRef(stations);
   signalRef.current = signalDb;
+  noiseFloorRef.current = noiseFloorDb;
   activeRef.current = active;
   centerRef.current = centerFreqKHz;
   stationsRef.current = stations;
@@ -65,18 +60,13 @@ export function Waterfall({ signalDb, active, centerFreqKHz = 0, spanKHz = 6, st
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const blips = Array.from({ length: NUM_AMBIENT_BLIPS }, makeBlip);
-    let lastTime = performance.now();
     let raf = 0;
 
-    const intensityAt = (x: number, level: number, ownX: number): number => {
-      let intensity = 0.03 + Math.random() * 0.02;
-
-      for (const b of blips) {
-        const d = x - b.x;
-        const falloff = Math.exp(-(d * d) / (2 * b.spread * b.spread));
-        intensity += falloff * b.baseIntensity * (0.7 + 0.3 * Math.sin(b.phase));
-      }
+    const intensityAt = (x: number, level: number, ownX: number, floorLevel: number): number => {
+      // Real ambient noise floor, not a fabricated wander -- plus a faint
+      // per-pixel dither so it reads as static texture rather than a flat
+      // band.
+      let intensity = floorLevel * 0.35 + Math.random() * 0.05;
 
       for (const s of stationsRef.current) {
         const offsetKHz = s.freqKHz - centerRef.current;
@@ -85,7 +75,12 @@ export function Waterfall({ signalDb, active, centerFreqKHz = 0, spanKHz = 6, st
         const d = x - sx;
         const spread = s.transmitting ? 5 : 3;
         const falloff = Math.exp(-(d * d) / (2 * spread * spread));
-        intensity += falloff * (s.transmitting ? 0.9 : 0.35);
+        // A station that's really audible right now shows as a strong
+        // peak; one that's merely on the roster (out of your passband, or
+        // too weak to copy) still shows as a faint presence marker, the
+        // way a real panadapter shows signals you can see but not yet hear.
+        const peak = s.transmitting ? 0.95 : s.audible ? 0.75 : 0.25;
+        intensity += falloff * peak;
       }
 
       const ownD = x - ownX;
@@ -95,18 +90,10 @@ export function Waterfall({ signalDb, active, centerFreqKHz = 0, spanKHz = 6, st
       return Math.min(1, intensity);
     };
 
-    const draw = (now: number) => {
-      const dtSec = Math.min(0.2, (now - lastTime) / 1000);
-      lastTime = now;
-
-      for (const b of blips) {
-        b.x += b.driftPerSec * dtSec;
-        if (b.x < -10 || b.x > WIDTH + 10 || Math.random() < 0.002) Object.assign(b, makeBlip());
-        b.phase += dtSec * 2;
-      }
-
+    const draw = () => {
       const level = Math.max(0, Math.min(1, (signalRef.current + 95) / 110));
-      const ownX = WIDTH / 2 + (Math.random() - 0.5) * 3;
+      const floorLevel = Math.max(0, Math.min(1, (noiseFloorRef.current + 95) / 110));
+      const ownX = WIDTH / 2;
 
       // Scroll the waterfall region down by one row, then paint a fresh one.
       const image = ctx.getImageData(0, FALL_TOP, WIDTH, FALL_HEIGHT - 1);
@@ -114,7 +101,7 @@ export function Waterfall({ signalDb, active, centerFreqKHz = 0, spanKHz = 6, st
 
       const row = ctx.createImageData(WIDTH, 1);
       for (let x = 0; x < WIDTH; x++) {
-        const intensity = intensityAt(x, level, ownX);
+        const intensity = intensityAt(x, level, ownX, floorLevel);
         const idx = x * 4;
         // Deep blue -> purple -> pink/white as intensity rises.
         row.data[idx] = 20 + intensity * 210;
@@ -131,7 +118,7 @@ export function Waterfall({ signalDb, active, centerFreqKHz = 0, spanKHz = 6, st
       ctx.beginPath();
       ctx.moveTo(0, SCOPE_HEIGHT);
       for (let x = 0; x < WIDTH; x++) {
-        const intensity = intensityAt(x, level, ownX);
+        const intensity = intensityAt(x, level, ownX, floorLevel);
         ctx.lineTo(x, SCOPE_HEIGHT - intensity * (SCOPE_HEIGHT - 2));
       }
       ctx.lineTo(WIDTH, SCOPE_HEIGHT);

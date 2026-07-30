@@ -141,6 +141,7 @@ interface RadioPanelProps {
 
   signalDb: number;
   audibleStationIds: string[];
+  noiseFloorDb: number;
   roster: StationInfo[];
   ownId: string | null;
   events: string[];
@@ -258,6 +259,7 @@ export function RadioPanel(props: RadioPanelProps) {
     onToggleScan,
     signalDb,
     audibleStationIds,
+    noiseFloorDb,
     roster,
     ownId,
     events,
@@ -336,15 +338,25 @@ export function RadioPanel(props: RadioPanelProps) {
             </div>
             <Waterfall
               signalDb={signalDb}
+              noiseFloorDb={noiseFloorDb}
               active={transmitting}
               centerFreqKHz={activeVfoState.freqKHz}
-              stations={roster.filter((s) => s.id !== ownId).map((s) => ({ id: s.id, freqKHz: s.freqKHz, transmitting: s.transmitting }))}
+              stations={roster
+                .filter((s) => s.id !== ownId)
+                .map((s) => ({ id: s.id, freqKHz: s.freqKHz, transmitting: s.transmitting, audible: audibleSet.has(s.id) }))}
             />
           </div>
         </div>
 
-        <div className="panel__nameplate">
-          <img className="panel__nameplate-img" src="/koden-nameplate.jpg" alt="KODEN DX-9000 - Multiband Transceiver - Made in Japan" />
+        <div className="panel__top-right-col">
+          <div className="panel__nameplate">
+            <img className="panel__nameplate-img" src="/koden-nameplate.jpg" alt="KODEN DX-9000 - Multiband Transceiver - Made in Japan" />
+          </div>
+          <div className="knob-row">
+            <Knob label="AF GAIN" value={rx.afGain} min={0} max={10} onChange={(v) => onUpdateRx({ afGain: v })} />
+            <Knob label="RF GAIN" value={rx.rfGain} min={0} max={10} onChange={(v) => onUpdateRx({ rfGain: v })} />
+            <Knob label="SQL" value={rx.squelch} min={0} max={10} onChange={(v) => onUpdateRx({ squelch: v })} />
+          </div>
         </div>
       </div>
 
@@ -568,21 +580,16 @@ export function RadioPanel(props: RadioPanelProps) {
             <Knob size="small" label="NOTCH WIDTH" value={rx.notchWidth} min={0} max={10} onChange={(v) => onUpdateRx({ notchWidth: v })} />
           </div>
 
-          <div className="panel__rit-xit-row">
-            <div className="button-group">
-              <div className="button-group__label">RIT/XIT</div>
-              <PanelButton small label="RIT" active={ritEnabled} onClick={onToggleRit} />
-              <PanelButton small label="XIT" active={xitEnabled} onClick={onToggleXit} />
-              <Knob size="small" label="OFFSET" value={offsetHz} min={-1500} max={1500} onChange={onChangeOffsetHz} />
-            </div>
-            <Knob label="IF SHIFT" value={rx.ifShiftHz} min={-1500} max={1500} onChange={(v) => onUpdateRx({ ifShiftHz: v })} />
-            <Knob label="AF⇒RF" value={rx.afRfBalance} min={0} max={10} onChange={(v) => onUpdateRx({ afRfBalance: v })} />
+          <div className="button-group">
+            <div className="button-group__label">RIT/XIT</div>
+            <PanelButton small label="RIT" active={ritEnabled} onClick={onToggleRit} />
+            <PanelButton small label="XIT" active={xitEnabled} onClick={onToggleXit} />
           </div>
 
           <div className="knob-row">
-            <Knob label="AF GAIN" value={rx.afGain} min={0} max={10} onChange={(v) => onUpdateRx({ afGain: v })} />
-            <Knob label="RF GAIN" value={rx.rfGain} min={0} max={10} onChange={(v) => onUpdateRx({ rfGain: v })} />
-            <Knob label="SQL" value={rx.squelch} min={0} max={10} onChange={(v) => onUpdateRx({ squelch: v })} />
+            <Knob size="small" label="OFFSET" value={offsetHz} min={-1500} max={1500} onChange={onChangeOffsetHz} />
+            <Knob label="IF SHIFT" value={rx.ifShiftHz} min={-1500} max={1500} onChange={(v) => onUpdateRx({ ifShiftHz: v })} />
+            <Knob label="AF⇒RF" value={rx.afRfBalance} min={0} max={10} onChange={(v) => onUpdateRx({ afRfBalance: v })} />
           </div>
         </div>
       </div>

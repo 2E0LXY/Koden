@@ -159,14 +159,13 @@ export class AudioEngine {
     this.rfGainNode = new GainNode(context, { gain: 1 });
     this.afGainNode = new GainNode(context, { gain: 0.7 });
     this.squelchGate = new GainNode(context, { gain: 1 });
-    // The AGC compressor above caps everything around its -24dB threshold
-    // and never applies makeup gain (Web Audio's DynamicsCompressorNode
-    // only ever attenuates), so without a boost afterward, both compressed
-    // signals and the untouched noise floor below threshold end up much
-    // quieter than normal listening levels. This restores real-radio-like
-    // loudness while the AGC still does its job of preventing strong
-    // signals from overwhelming weak ones.
-    this.outputMakeupGain = new GainNode(context, { gain: 3.5 });
+    // Web Audio's DynamicsCompressorNode only ever attenuates -- it never
+    // applies makeup gain -- so the ~3:1 compression above needs a large
+    // fixed boost afterward to bring the whole compressed 55dB input range
+    // back up to a normal listening level. Sized so the quietest bands'
+    // ambient noise floor becomes audible without the loudest realistic
+    // signals clipping (see AGC settings above for the full reasoning).
+    this.outputMakeupGain = new GainNode(context, { gain: 65 });
 
     this.playbackNode
       .connect(this.ifShiftFilter)
@@ -353,16 +352,21 @@ export class AudioEngine {
       this.agcCompressor.ratio.value = 1;
       this.agcCompressor.knee.value = 0;
     } else {
-      // Only tame genuinely strong signals (above threshold) with a mild
-      // ratio -- weak/moderate signals pass through essentially untouched,
-      // so the propagation model's actual fading, flutter, and static stay
-      // audible as real level changes instead of being ironed flat by a
-      // near-limiter. FAST recovers quickly after a peak; SLOW rides out
-      // fades more slowly (and offers less protection against sudden loud
-      // peaks, same tradeoff as a real radio's AGC).
-      this.agcCompressor.threshold.value = -20;
-      this.agcCompressor.ratio.value = p.agcMode === "FAST" ? 5 : 4;
-      this.agcCompressor.knee.value = p.agcMode === "FAST" ? 8 : 12;
+      // The propagation model's dB scale spans a huge range: from the
+      // quietest bands' ambient noise floor (down around -55dB) up to a
+      // strong nearby signal (near 0dB) -- roughly 55dB. A real receiver's
+      // AGC compresses that whole range down to a comfortable listening
+      // window rather than only kicking in above some threshold, which is
+      // why the threshold sits low enough to catch essentially everything,
+      // including the quietest bands' static, not just strong signals.
+      // A real ratio around 3:1 still leaves fades, antenna directionality,
+      // and interference clearly audible as relative level changes, just
+      // compressed into a narrower window -- unlike a steep near-limiter
+      // ratio, which would iron them flat. FAST vs SLOW differ mainly in
+      // how quickly they react and recover, same as a real radio's AGC.
+      this.agcCompressor.threshold.value = -60;
+      this.agcCompressor.ratio.value = 3;
+      this.agcCompressor.knee.value = p.agcMode === "FAST" ? 10 : 16;
       this.agcCompressor.attack.value = p.agcMode === "FAST" ? 0.008 : 0.03;
       this.agcCompressor.release.value = p.agcMode === "FAST" ? 0.25 : 1.4;
     }
