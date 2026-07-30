@@ -166,7 +166,7 @@ export class AudioEngine {
     // quieter than normal listening levels. This restores real-radio-like
     // loudness while the AGC still does its job of preventing strong
     // signals from overwhelming weak ones.
-    this.outputMakeupGain = new GainNode(context, { gain: 6 });
+    this.outputMakeupGain = new GainNode(context, { gain: 3.5 });
 
     this.playbackNode
       .connect(this.ifShiftFilter)
@@ -353,16 +353,18 @@ export class AudioEngine {
       this.agcCompressor.ratio.value = 1;
       this.agcCompressor.knee.value = 0;
     } else {
-      // A real AGC's characteristic "pumping" -- audible gain recovering
-      // after a strong peak or a fade -- needs a near-limiter ratio and a
-      // hard knee. FAST reacts almost instantly and recovers quickly enough
-      // for the pump to be clearly audible on fading/fluttering signals;
-      // SLOW is gentler and smooths most of it away.
-      this.agcCompressor.threshold.value = -24;
-      this.agcCompressor.ratio.value = p.agcMode === "FAST" ? 20 : 12;
-      this.agcCompressor.knee.value = p.agcMode === "FAST" ? 0 : 6;
-      this.agcCompressor.attack.value = p.agcMode === "FAST" ? 0.002 : 0.01;
-      this.agcCompressor.release.value = p.agcMode === "FAST" ? 0.08 : 0.8;
+      // Only tame genuinely strong signals (above threshold) with a mild
+      // ratio -- weak/moderate signals pass through essentially untouched,
+      // so the propagation model's actual fading, flutter, and static stay
+      // audible as real level changes instead of being ironed flat by a
+      // near-limiter. FAST recovers quickly after a peak; SLOW rides out
+      // fades more slowly (and offers less protection against sudden loud
+      // peaks, same tradeoff as a real radio's AGC).
+      this.agcCompressor.threshold.value = -20;
+      this.agcCompressor.ratio.value = p.agcMode === "FAST" ? 5 : 4;
+      this.agcCompressor.knee.value = p.agcMode === "FAST" ? 8 : 12;
+      this.agcCompressor.attack.value = p.agcMode === "FAST" ? 0.008 : 0.03;
+      this.agcCompressor.release.value = p.agcMode === "FAST" ? 0.25 : 1.4;
     }
 
     const balance = 0.5 + p.afRfBalance / 10;

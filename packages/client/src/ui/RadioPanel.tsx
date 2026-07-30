@@ -298,6 +298,12 @@ export function RadioPanel(props: RadioPanelProps) {
 
         <div className="panel__dual-display">
           <div className="panel__scope-display">
+            <span
+              className={`panel__status panel__status--${connectionStatus}`}
+              title="Connection to the Koden server -- not a band condition"
+            >
+              {CONNECTION_LABELS[connectionStatus] ?? connectionStatus.toUpperCase()}
+            </span>
             <SMeter signalDb={signalDb} />
             <SwrBar swr={swr} tuning={tunerActive} />
             <CompMeter enabled={compEnabled} level={procLevel} />
@@ -328,18 +334,17 @@ export function RadioPanel(props: RadioPanelProps) {
               <span>{split ? "SPLIT" : ""}</span>
               <span>{antennaLabel}</span>
             </div>
-            <Waterfall signalDb={signalDb} active={transmitting} />
+            <Waterfall
+              signalDb={signalDb}
+              active={transmitting}
+              centerFreqKHz={activeVfoState.freqKHz}
+              stations={roster.filter((s) => s.id !== ownId).map((s) => ({ id: s.id, freqKHz: s.freqKHz, transmitting: s.transmitting }))}
+            />
           </div>
         </div>
 
         <div className="panel__nameplate">
           <img className="panel__nameplate-img" src="/koden-nameplate.jpg" alt="KODEN DX-9000 - Multiband Transceiver - Made in Japan" />
-          <span
-            className={`panel__status panel__status--${connectionStatus}`}
-            title="Connection to the Koden server -- not a band condition"
-          >
-            {CONNECTION_LABELS[connectionStatus] ?? connectionStatus.toUpperCase()}
-          </span>
         </div>
       </div>
 
