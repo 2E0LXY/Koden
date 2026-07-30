@@ -526,6 +526,10 @@ button {
 .panel-btn:active {
   transform: translateY(1px);
 }
+.panel-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
 .panel-btn--small {
   padding: 5px 4px;
   font-size: 10px;
@@ -729,6 +733,9 @@ button {
   display: block;
   width: 100%;
   height: 120px;
+}
+.waterfall__canvas--clickable {
+  cursor: pointer;
 }
 .waterfall__tuneline {
   position: absolute;
