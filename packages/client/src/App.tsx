@@ -785,6 +785,7 @@ export function App() {
       scanning={scanning}
       onToggleScan={() => setScanning((s) => !s)}
       signalDb={displaySignalDb}
+      noiseFloorDb={meter.noiseFloorDb}
       audibleStationIds={meter.audibleStationIds}
       roster={roster}
       ownId={ownId}

@@ -288,6 +288,13 @@ button {
   color: #e8b84b;
 }
 
+.panel__top-right-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 260px;
+}
+
 .panel__nameplate {
   width: 260px;
   background: #1a1a1c;
@@ -380,11 +387,6 @@ button {
   width: 72px;
 }
 
-.panel__rit-xit-row {
-  display: flex;
-  gap: 10px;
-  align-items: flex-end;
-}
 
 /* ---------- Body layout ---------- */
 
