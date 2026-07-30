@@ -142,6 +142,7 @@ interface RadioPanelProps {
   signalDb: number;
   audibleStationIds: string[];
   noiseFloorDb: number;
+  txModLevel: number;
   roster: StationInfo[];
   ownId: string | null;
   events: string[];
@@ -260,6 +261,7 @@ export function RadioPanel(props: RadioPanelProps) {
     signalDb,
     audibleStationIds,
     noiseFloorDb,
+    txModLevel,
     roster,
     ownId,
     events,
@@ -268,6 +270,13 @@ export function RadioPanel(props: RadioPanelProps) {
   const activeVfoState = activeVfo === "A" ? vfoA : vfoB;
   const otherVfo = activeVfo === "A" ? vfoB : vfoA;
   const audibleSet = new Set(audibleStationIds);
+  // SSB carries no RF between syllables -- the wattmeter should swing with
+  // actual voice peaks. CW/AM/FM/RTTY/DATA transmit a continuous carrier, so
+  // it holds near full power with just a touch of realistic needle jitter.
+  const isVoiceMode = activeVfoState.mode === "USB" || activeVfoState.mode === "LSB";
+  const txEnvelope = isVoiceMode
+    ? Math.max(0.04, txModLevel)
+    : 0.94 + Math.sin(performance.now() / 137) * 0.05;
   const filterLabel = filterWidth === "narrow" ? "NAR" : filterWidth === "normal" ? "MID" : "WIDE";
   const antennaMeta = antennaById(antenna);
   const antennaLabel = antennaMeta
@@ -309,7 +318,7 @@ export function RadioPanel(props: RadioPanelProps) {
             <SMeter signalDb={signalDb} />
             <SwrBar swr={swr} tuning={tunerActive} />
             <CompMeter enabled={compEnabled} level={procLevel} />
-            <WattMeter watts={txPower * 10} transmitting={transmitting} />
+            <WattMeter watts={txPower * 10 * txEnvelope} transmitting={transmitting} />
           </div>
 
           <div className={`panel__display ${mScope ? "panel__display--big-scope" : ""}`}>
@@ -344,6 +353,7 @@ export function RadioPanel(props: RadioPanelProps) {
               stations={roster
                 .filter((s) => s.id !== ownId)
                 .map((s) => ({ id: s.id, freqKHz: s.freqKHz, transmitting: s.transmitting, audible: audibleSet.has(s.id) }))}
+              onTuneTo={onTuneKnob}
             />
           </div>
         </div>
@@ -376,7 +386,15 @@ export function RadioPanel(props: RadioPanelProps) {
           <div className="agc-switch__label">AGC</div>
           <div className="agc-switch__options">
             {(["OFF", "FAST", "SLOW"] as AgcMode[]).map((m) => (
-              <PanelButton key={m} label={m} small active={agcMode === m} onClick={() => onSelectAgc(m)} />
+              <PanelButton
+                key={m}
+                label={m}
+                small
+                active={agcMode === m}
+                disabled={activeVfoState.mode === "FM"}
+                onClick={() => onSelectAgc(m)}
+                title={activeVfoState.mode === "FM" ? "AGC time constant isn't adjustable in FM" : undefined}
+              />
             ))}
           </div>
         </div>
@@ -587,7 +605,7 @@ export function RadioPanel(props: RadioPanelProps) {
           </div>
 
           <div className="knob-row">
-            <Knob size="small" label="OFFSET" value={offsetHz} min={-1500} max={1500} onChange={onChangeOffsetHz} />
+            <Knob size="small" label="OFFSET" value={offsetHz} min={-9990} max={9990} onChange={onChangeOffsetHz} />
             <Knob label="IF SHIFT" value={rx.ifShiftHz} min={-1500} max={1500} onChange={(v) => onUpdateRx({ ifShiftHz: v })} />
             <Knob label="AF⇒RF" value={rx.afRfBalance} min={0} max={10} onChange={(v) => onUpdateRx({ afRfBalance: v })} />
           </div>

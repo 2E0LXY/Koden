@@ -15,6 +15,8 @@ interface WaterfallProps {
   centerFreqKHz?: number;
   spanKHz?: number;
   stations?: WaterfallStation[];
+  /** Click/tap anywhere on the display to tune directly to that frequency, like a real panadapter. */
+  onTuneTo?: (freqKHz: number) => void;
 }
 
 const WIDTH = 320;
@@ -41,6 +43,7 @@ export function Waterfall({
   centerFreqKHz = 0,
   spanKHz = 6,
   stations = [],
+  onTuneTo,
 }: WaterfallProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const signalRef = useRef(signalDb);
@@ -140,9 +143,24 @@ export function Waterfall({
 
   const half = spanKHz / 2;
 
+  const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!onTuneTo) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const xFrac = (e.clientX - rect.left) / rect.width;
+    const offsetKHz = (Math.max(0, Math.min(1, xFrac)) - 0.5) * spanKHz;
+    const freqKHz = Math.round((centerFreqKHz + offsetKHz) * 100) / 100;
+    onTuneTo(freqKHz);
+  };
+
   return (
     <div className="waterfall">
-      <canvas ref={canvasRef} width={WIDTH} height={HEIGHT} />
+      <canvas
+        ref={canvasRef}
+        width={WIDTH}
+        height={HEIGHT}
+        onClick={onClick}
+        className={onTuneTo ? "waterfall__canvas--clickable" : undefined}
+      />
       <div className="waterfall__tuneline" />
       <div className="waterfall__scale">
         <span>-{half.toFixed(1)}</span>

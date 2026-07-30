@@ -23,6 +23,15 @@ import { RadioPanel } from "./ui/RadioPanel.js";
  * needle down, same as they quiet the audio. Mirrors the dB deltas used for
  * AudioEngine's rfGainNode so what you see and what you hear agree.
  */
+/**
+ * Real transceivers ship with these AGC time-constant defaults per mode:
+ * slow for SSB/AM (smoother on voice), fast for CW/digital (keeps up with
+ * rapid keying) -- and FM's AGC isn't user-adjustable at all.
+ */
+function defaultAgcForMode(mode: Mode): AgcMode {
+  return mode === "CW" || mode === "RTTY" || mode === "DATA" ? "FAST" : "SLOW";
+}
+
 function rfSensitivityAdjustDb(rfGain: number, attEnabled: boolean, ipoEnabled: boolean): number {
   const gainDb = 20 * Math.log10(Math.max(0.001, rfGain / 10));
   const attDb = attEnabled ? -9 : 0;
@@ -63,7 +72,7 @@ const DEFAULT_RX: ReceiveParams = {
   ifShiftHz: 0,
   pbtQ: 5,
   width: 10,
-  agcMode: "FAST",
+  agcMode: "SLOW", // matches the default starting mode (USB)
   attEnabled: false,
   ipoEnabled: false,
   apfEnabled: false,
@@ -113,6 +122,7 @@ export function App() {
   const [vox, setVox] = useState(false);
   const [voxActive, setVoxActive] = useState(false);
   const [voxDelayKnob, setVoxDelayKnob] = useState(4); // -> ~800ms
+  const [txModLevel, setTxModLevel] = useState(0);
 
   const [rx, setRx] = useState<ReceiveParams>(DEFAULT_RX);
   const [compEnabled, setCompEnabled] = useState(false);
@@ -382,6 +392,21 @@ export function App() {
     };
   }, [vox, voxDelayKnob]);
 
+  // Live TX modulation envelope (real mic level, not a fabricated wiggle) --
+  // drives the WATT meter so it swings with actual voice peaks like a real
+  // PEP wattmeter, instead of sitting at a static bar for the whole transmission.
+  useEffect(() => {
+    if (!transmitting) {
+      setTxModLevel(0);
+      return;
+    }
+    const interval = window.setInterval(() => {
+      const level = audioEngineRef.current?.getMicLevel() ?? 0;
+      setTxModLevel(Math.max(0, Math.min(1, level / 0.15)));
+    }, 50);
+    return () => window.clearInterval(interval);
+  }, [transmitting]);
+
   // Band scan: sweep upward across the current band.
   useEffect(() => {
     if (!scanning || vfoLocked) return;
@@ -477,6 +502,7 @@ export function App() {
   const onModeSelect = useCallback(
     (mode: Mode) => {
       setActiveVfoState((prev) => ({ ...prev, mode }));
+      if (mode !== "FM") setRx((prev) => ({ ...prev, agcMode: defaultAgcForMode(mode) }));
       beep(700, 60);
     },
     [setActiveVfoState],
@@ -485,6 +511,7 @@ export function App() {
   const onBandSelect = useCallback(
     (b: Band) => {
       setActiveVfoState({ freqKHz: b.rangeKHz[0] + 50, mode: b.defaultMode });
+      if (b.defaultMode !== "FM") setRx((prev) => ({ ...prev, agcMode: defaultAgcForMode(b.defaultMode) }));
       // A real antenna's match is frequency-dependent, so hopping bands
       // knocks the SWR back out of tune until the tuner is re-run.
       setSwr(1.8 + Math.random() * 2.7);
@@ -516,18 +543,31 @@ export function App() {
     relay(true);
     audioEngineRef.current?.setSquelchOpen(false);
 
-    // Sweep the SWR through a jittery search -- a rapid chatter of relays
-    // stepping through L/C combinations, like a real ATU hunting for a
-    // match -- before settling on a good one.
+    // A real ATU steps its L/C relay network through many combinations very
+    // fast while searching, then slows down as it converges on a match --
+    // a rapid chatter of clicks with the SWR reading swinging wildly, easing
+    // into a few slower, closer-together readings before it settles.
     const finalSwr = 1.05 + Math.random() * 0.25;
-    const totalMs = 2400;
-    const stepCount = 16;
-    const sweep: { atMs: number; value: number }[] = Array.from({ length: stepCount }, (_, i) => {
-      const isLast = i === stepCount - 1;
-      const atMs = 120 + i * ((totalMs - 300) / stepCount) + Math.random() * 40;
-      const value = isLast ? finalSwr + 0.2 + Math.random() * 0.3 : 1.4 + Math.random() * 3.2;
-      return { atMs, value };
+    const chatterSteps = 42;
+    const chatterMs = 950;
+    const settleSteps = 7;
+    const settleMs = 950;
+    const totalMs = chatterMs + settleMs + 300;
+
+    const chatter: { atMs: number; value: number }[] = Array.from({ length: chatterSteps }, (_, i) => ({
+      atMs: 100 + (i * chatterMs) / chatterSteps + Math.random() * 8,
+      value: 1.4 + Math.random() * 3.6,
+    }));
+    const settle: { atMs: number; value: number }[] = Array.from({ length: settleSteps }, (_, i) => {
+      const t = i / (settleSteps - 1);
+      const isLast = i === settleSteps - 1;
+      return {
+        atMs: 100 + chatterMs + t * t * settleMs,
+        value: isLast ? finalSwr : finalSwr + (1 - t) * (0.8 + Math.random() * 0.6),
+      };
     });
+    const sweep = [...chatter, ...settle];
+
     const timeouts = sweep.map(({ atMs, value }, i) =>
       window.setTimeout(() => {
         setSwr(value);
@@ -736,7 +776,7 @@ export function App() {
       xitEnabled={xitEnabled}
       onToggleXit={() => setXitEnabled((s) => !s)}
       offsetHz={offsetHz}
-      onChangeOffsetHz={setOffsetHz}
+      onChangeOffsetHz={(hz) => setOffsetHz(Math.round(hz / 10) * 10)}
       onClear={() => {
         setOffsetHz(0);
         beep(400, 60);
@@ -786,6 +826,7 @@ export function App() {
       onToggleScan={() => setScanning((s) => !s)}
       signalDb={displaySignalDb}
       noiseFloorDb={meter.noiseFloorDb}
+      txModLevel={txModLevel}
       audibleStationIds={meter.audibleStationIds}
       roster={roster}
       ownId={ownId}
