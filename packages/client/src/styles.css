@@ -103,7 +103,7 @@ button {
 }
 
 .panel--dim .panel__display,
-.panel--dim .s-meter,
+.panel--dim .meter-bar,
 .panel--dim .waterfall {
   filter: brightness(0.35);
 }
@@ -153,36 +153,49 @@ button {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
 }
-.swr-bar {
+.meter-bar {
   display: flex;
   flex-direction: column;
   gap: 3px;
 }
-.swr-bar__label {
+.meter-bar__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.meter-bar__label {
   font-size: 9px;
   color: #a98a3f;
   letter-spacing: 1px;
-  text-align: center;
   font-family: "Courier New", monospace;
 }
-.swr-bar__track {
-  width: 100%;
-  height: 6px;
+.meter-bar__readout {
+  font-size: 10px;
+  color: #e8c73a;
+  font-family: "Courier New", monospace;
+  font-weight: bold;
+}
+.meter-bar__track {
+  display: flex;
+  gap: 1px;
+  height: 8px;
   background: #1a1a1a;
   border: 1px solid #333;
   border-radius: 3px;
-  overflow: hidden;
+  padding: 1px;
 }
-.swr-bar__fill {
-  height: 100%;
-  transition: width 0.15s ease, background 0.15s ease;
+.meter-bar__seg {
+  flex: 1;
+  background: #222;
+  border-radius: 1px;
+  transition: background 0.1s ease;
 }
-.swr-bar--tuning .swr-bar__fill {
+.meter-bar--pulsing .meter-bar__seg {
   animation: swr-pulse 0.3s ease-in-out infinite alternate;
 }
-.swr-bar--tuning .swr-bar__label {
+.meter-bar--pulsing .meter-bar__label {
   color: #ff8a3a;
 }
 @keyframes swr-pulse {
@@ -664,44 +677,6 @@ button {
   font-size: 11px;
 }
 
-/* ---------- S-Meter ---------- */
-
-.s-meter {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.s-meter__face {
-  width: 100%;
-  height: 90px;
-}
-.s-meter__arc {
-  fill: none;
-  stroke: #3a3a2a;
-  stroke-width: 2;
-}
-.s-meter__tick {
-  stroke: #7a6a3f;
-  stroke-width: 1.5;
-}
-.s-meter__label {
-  fill: #a98a3f;
-  font-size: 9px;
-  font-family: "Courier New", monospace;
-}
-.s-meter__needle {
-  stroke: #ff5a3a;
-  stroke-width: 2;
-}
-.s-meter__hub {
-  fill: #ff5a3a;
-}
-.s-meter__caption {
-  font-size: 9px;
-  letter-spacing: 2px;
-  color: #7a6a3f;
-  margin-top: -4px;
-}
 
 /* ---------- Jacks ---------- */
 

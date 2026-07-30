@@ -90,6 +90,7 @@ export class AudioEngine {
   private rfGainNode: GainNode | null = null;
   private afGainNode: GainNode | null = null;
   private squelchGate: GainNode | null = null;
+  private outputMakeupGain: GainNode | null = null;
 
   // Transmit chain nodes.
   private micGainNode: GainNode | null = null;
@@ -158,6 +159,14 @@ export class AudioEngine {
     this.rfGainNode = new GainNode(context, { gain: 1 });
     this.afGainNode = new GainNode(context, { gain: 0.7 });
     this.squelchGate = new GainNode(context, { gain: 1 });
+    // The AGC compressor above caps everything around its -24dB threshold
+    // and never applies makeup gain (Web Audio's DynamicsCompressorNode
+    // only ever attenuates), so without a boost afterward, both compressed
+    // signals and the untouched noise floor below threshold end up much
+    // quieter than normal listening levels. This restores real-radio-like
+    // loudness while the AGC still does its job of preventing strong
+    // signals from overwhelming weak ones.
+    this.outputMakeupGain = new GainNode(context, { gain: 6 });
 
     this.playbackNode
       .connect(this.ifShiftFilter)
@@ -170,6 +179,7 @@ export class AudioEngine {
       .connect(this.rfGainNode)
       .connect(this.afGainNode)
       .connect(this.squelchGate)
+      .connect(this.outputMakeupGain)
       .connect(context.destination);
 
     this.applyReceiveParams();
