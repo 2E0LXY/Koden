@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface WaterfallStation {
   id: string;
@@ -24,17 +24,25 @@ const HEIGHT = 120;
 const SCOPE_HEIGHT = 26;
 const FALL_TOP = SCOPE_HEIGHT + 2;
 const FALL_HEIGHT = HEIGHT - FALL_TOP;
+/** Recenter the fixed window once the tuned frequency drifts this far (as a fraction of the span) from its middle. */
+const RECENTER_THRESHOLD = 0.4;
 
 /**
  * A stylized panadapter/waterfall combo styled after a typical HF
  * transceiver's blue-purple spectrum display: a live scope trace on top, a
- * scrolling waterfall below, and a red tuning line at centre. There's no
- * real per-bin FFT to draw (the server doesn't ship one) -- every bump on
- * screen instead comes from real data: the actual noise floor level, the
- * real signal you're receiving at the tuned frequency, and every other
- * roster station plotted at its real frequency offset, sized by whether
- * the mixer actually reports it as audible right now. The only randomness
- * is a faint per-pixel dither for texture, not fabricated activity.
+ * scrolling waterfall below, and a red tuning line. There's no real per-bin
+ * FFT to draw (the server doesn't ship one) -- every bump on screen instead
+ * comes from real data: the actual noise floor level, the real signal
+ * you're receiving, and every other roster station plotted at its real
+ * frequency offset, sized by whether the mixer actually reports it as
+ * audible right now. The only randomness is a faint per-pixel dither for
+ * texture, not fabricated activity.
+ *
+ * Like a real "FIX" panadapter mode, the frequency window only recenters
+ * once your tuned frequency drifts near its edge -- small tuning moves
+ * (turning the VFO knob, clicking elsewhere on the display) instead slide
+ * the red tuning line and your own signal bump visibly across the screen,
+ * rather than always snapping back to dead centre.
  */
 export function Waterfall({
   signalDb,
@@ -49,13 +57,23 @@ export function Waterfall({
   const signalRef = useRef(signalDb);
   const noiseFloorRef = useRef(noiseFloorDb);
   const activeRef = useRef(active);
-  const centerRef = useRef(centerFreqKHz);
   const stationsRef = useRef(stations);
+  const tunedRef = useRef(centerFreqKHz);
   signalRef.current = signalDb;
   noiseFloorRef.current = noiseFloorDb;
   activeRef.current = active;
-  centerRef.current = centerFreqKHz;
   stationsRef.current = stations;
+  tunedRef.current = centerFreqKHz;
+
+  const [windowCenterKHz, setWindowCenterKHz] = useState(centerFreqKHz);
+  const windowCenterRef = useRef(windowCenterKHz);
+  windowCenterRef.current = windowCenterKHz;
+
+  useEffect(() => {
+    setWindowCenterKHz((prev) =>
+      Math.abs(centerFreqKHz - prev) > spanKHz * RECENTER_THRESHOLD ? centerFreqKHz : prev,
+    );
+  }, [centerFreqKHz, spanKHz]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -72,7 +90,7 @@ export function Waterfall({
       let intensity = floorLevel * 0.35 + Math.random() * 0.05;
 
       for (const s of stationsRef.current) {
-        const offsetKHz = s.freqKHz - centerRef.current;
+        const offsetKHz = s.freqKHz - windowCenterRef.current;
         const sx = WIDTH / 2 + (offsetKHz / spanKHz) * WIDTH;
         if (sx < -10 || sx > WIDTH + 10) continue;
         const d = x - sx;
@@ -96,7 +114,8 @@ export function Waterfall({
     const draw = () => {
       const level = Math.max(0, Math.min(1, (signalRef.current + 95) / 110));
       const floorLevel = Math.max(0, Math.min(1, (noiseFloorRef.current + 95) / 110));
-      const ownX = WIDTH / 2;
+      const ownOffsetKHz = tunedRef.current - windowCenterRef.current;
+      const ownX = WIDTH / 2 + (ownOffsetKHz / spanKHz) * WIDTH;
 
       // Scroll the waterfall region down by one row, then paint a fresh one.
       const image = ctx.getImageData(0, FALL_TOP, WIDTH, FALL_HEIGHT - 1);
@@ -142,13 +161,14 @@ export function Waterfall({
   }, [spanKHz]);
 
   const half = spanKHz / 2;
+  const tuneLinePercent = Math.max(2, Math.min(98, 50 + ((centerFreqKHz - windowCenterKHz) / spanKHz) * 100));
 
   const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!onTuneTo) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const xFrac = (e.clientX - rect.left) / rect.width;
     const offsetKHz = (Math.max(0, Math.min(1, xFrac)) - 0.5) * spanKHz;
-    const freqKHz = Math.round((centerFreqKHz + offsetKHz) * 100) / 100;
+    const freqKHz = Math.round((windowCenterKHz + offsetKHz) * 100) / 100;
     onTuneTo(freqKHz);
   };
 
@@ -161,11 +181,11 @@ export function Waterfall({
         onClick={onClick}
         className={onTuneTo ? "waterfall__canvas--clickable" : undefined}
       />
-      <div className="waterfall__tuneline" />
+      <div className="waterfall__tuneline" style={{ left: `${tuneLinePercent}%` }} />
       <div className="waterfall__scale">
-        <span>-{half.toFixed(1)}</span>
+        <span>{(windowCenterKHz - half).toFixed(1)}</span>
         <span>{centerFreqKHz.toFixed(1)} kHz</span>
-        <span>+{half.toFixed(1)}</span>
+        <span>{(windowCenterKHz + half).toFixed(1)}</span>
       </div>
     </div>
   );

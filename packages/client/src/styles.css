@@ -741,11 +741,11 @@ button {
   position: absolute;
   top: 0;
   bottom: 14px;
-  left: 50%;
   width: 1px;
   background: #ff3a4a;
   box-shadow: 0 0 4px rgba(255, 58, 74, 0.8);
   pointer-events: none;
+  transition: left 0.1s linear;
 }
 .waterfall__scale {
   position: absolute;
