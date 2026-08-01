@@ -136,17 +136,34 @@ export class MorseBeacon {
     return out;
   }
 
-  /**
-   * Render this beacon's tone for one listener at `toneHz`, using a shared
-   * envelope from nextEnvelope(). Phase is computed directly from absolute
-   * time rather than accumulated per-listener state, since every listener
-   * can have a different (and changing) toneHz.
-   */
-  static renderTone(envelope: Float32Array, nowMs: number, sampleRate: number, toneHz: number): Float32Array {
+}
+
+/**
+ * Renders one listener's beacon tone at whatever pitch their tuning implies
+ * (see BEACON_CARRIER_KHZ), sharing a keying envelope from MorseBeacon but
+ * tracking its own oscillator phase. Phase is accumulated sample-by-sample
+ * rather than computed from absolute wall-clock time: `setInterval`-driven
+ * ticks don't land at *exactly* 20ms apart, and computing phase as
+ * `2*Math.PI*toneHz*(nowMs/1000)` for a real epoch-scale nowMs both loses
+ * meaningful floating-point precision (the product's magnitude is large
+ * enough that its ULP is a non-trivial fraction of a radian) and produces a
+ * real phase discontinuity at every frame boundary when the actual elapsed
+ * time drifts from the nominal frame length -- audible as a steady crackle
+ * riding on the tone. One instance per (beacon, listener) pair, matching how
+ * a real BFO would behave: continuous phase, with pitch sliding smoothly as
+ * the listener retunes.
+ */
+export class BeaconToneOscillator {
+  private phase = 0;
+
+  renderTone(envelope: Float32Array, sampleRate: number, toneHz: number): Float32Array {
     const out = new Float32Array(envelope.length);
+    const phaseStep = (2 * Math.PI * toneHz) / sampleRate;
     for (let i = 0; i < out.length; i++) {
-      const tSec = nowMs / 1000 + i / sampleRate;
-      out[i] = Math.sin(2 * Math.PI * toneHz * tSec) * envelope[i] * 0.8;
+      out[i] = Math.sin(this.phase) * envelope[i] * 0.8;
+      this.phase += phaseStep;
+      if (this.phase > Math.PI * 2) this.phase -= Math.PI * 2;
+      else if (this.phase < -Math.PI * 2) this.phase += Math.PI * 2;
     }
     return out;
   }

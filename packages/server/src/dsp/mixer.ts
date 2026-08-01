@@ -24,7 +24,14 @@ import {
   applySplatterColorInPlace,
 } from "./audioEffects.js";
 import { int16ToFloat32, float32ToInt16 } from "./pcm.js";
-import { BEACON_CARRIER_KHZ, BEACON_FREQ_KHZ, BEACON_ID, BEACON_SIGNAL_DB, MorseBeacon } from "./beacon.js";
+import {
+  BEACON_CARRIER_KHZ,
+  BEACON_FREQ_KHZ,
+  BEACON_ID,
+  BEACON_SIGNAL_DB,
+  BeaconToneOscillator,
+  MorseBeacon,
+} from "./beacon.js";
 
 const AUDIBLE_THRESHOLD_DB = -38;
 const METER_EVERY_N_TICKS = 4;
@@ -50,6 +57,7 @@ export class MixerEngine {
   private txBandwidthByStation = new Map<string, TxBandwidthState>();
   private multipathByPair = new Map<string, MultipathFilter>();
   private ssbShifterByPair = new Map<string, SsbFrequencyShifter>();
+  private beaconOscByStation = new Map<string, BeaconToneOscillator>();
   private tickCount = 0;
   private beacon = new MorseBeacon("KODEN BEACON", 10, 7);
 
@@ -69,6 +77,7 @@ export class MixerEngine {
     for (const key of [...this.ssbShifterByPair.keys()]) {
       if (key.startsWith(`${id}:`) || key.endsWith(`:${id}`)) this.ssbShifterByPair.delete(key);
     }
+    this.beaconOscByStation.delete(id);
   }
 
   private getTxBandwidthFilter(tx: Station): TxBandwidthFilter {
@@ -95,6 +104,14 @@ export class MixerEngine {
     const shifter = new SsbFrequencyShifter(this.sampleRate);
     this.ssbShifterByPair.set(key, shifter);
     return shifter;
+  }
+
+  private getBeaconOscillator(rx: Station): BeaconToneOscillator {
+    const existing = this.beaconOscByStation.get(rx.id);
+    if (existing) return existing;
+    const osc = new BeaconToneOscillator();
+    this.beaconOscByStation.set(rx.id, osc);
+    return osc;
   }
 
   private getNoiseGenerator(rx: Station, band: Band): BandNoiseGenerator {
@@ -158,7 +175,7 @@ export class MixerEngine {
         // listener's own tuning -- it slides as you tune and passes through
         // silence exactly on frequency (zero beat), instead of a fixed tone.
         const beaconToneHz = Math.abs((rx.freqKHz - BEACON_CARRIER_KHZ) * 1000);
-        const beaconFrame = MorseBeacon.renderTone(beaconEnvelope, nowMs, this.sampleRate, beaconToneHz);
+        const beaconFrame = this.getBeaconOscillator(rx).renderTone(beaconEnvelope, this.sampleRate, beaconToneHz);
         for (let i = 0; i < output.length; i++) output[i] += beaconFrame[i] * beaconGain;
       }
 
