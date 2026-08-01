@@ -266,7 +266,7 @@ export class IgnitionBuzz {
         this.burstRemaining--;
       } else if (this.nextCheckSamples <= 0) {
         this.nextCheckSamples = Math.round(this.sampleRate * (2 + Math.random() * 6));
-        if (Math.random() < 0.25) this.burstRemaining = Math.round(this.sampleRate * (0.3 + Math.random() * 0.8));
+        if (Math.random() < 0.4) this.burstRemaining = Math.round(this.sampleRate * (0.3 + Math.random() * 1.2));
       } else {
         this.nextCheckSamples--;
       }
@@ -275,6 +275,88 @@ export class IgnitionBuzz {
         this.phaseSamples = (this.phaseSamples + 1) % this.periodSamples;
         if (this.phaseSamples < 6) {
           const t = this.phaseSamples / 6;
+          out[i] += (1 - t) * this.intensity * (Math.random() * 2 - 1);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Switch-mode power supply "hash": the rough, buzzy harmonic noise thrown
+ * off by cheap SMPS/LED-driver/charger switching regulators. Unlike
+ * atmospheric static (worst on the low bands), this gets *more* noticeable
+ * on the higher HF bands, where it isn't masked by atmospheric noise the
+ * way it is lower down. Modeled as a handful of harmonically-related tones
+ * (each instance's fundamental picked randomly, so different receive
+ * locations sound like they're near a different switcher) with a fast,
+ * small random flutter on the overall level -- a steady chord of tones
+ * would read as a birdie, not a rough hash.
+ */
+export class SmpsHash {
+  private phases: number[];
+  private steps: number[];
+  private envelope = 0.75;
+
+  constructor(sampleRate: number, private intensity: number) {
+    const fundamentalHz = 70 + Math.random() * 70;
+    const harmonics = [1, 3, 5, 7, 9];
+    this.phases = harmonics.map(() => Math.random() * Math.PI * 2);
+    this.steps = harmonics.map((h) => (2 * Math.PI * fundamentalHz * h) / sampleRate);
+  }
+
+  fillAdd(out: Float32Array): void {
+    for (let i = 0; i < out.length; i++) {
+      this.envelope = Math.max(0.5, Math.min(1, this.envelope + (Math.random() - 0.5) * 0.08));
+      let sum = 0;
+      for (let h = 0; h < this.phases.length; h++) {
+        sum += Math.sin(this.phases[h]) / (h + 1);
+        this.phases[h] += this.steps[h];
+        if (this.phases[h] > Math.PI * 2) this.phases[h] -= Math.PI * 2;
+      }
+      out[i] += sum * this.intensity * this.envelope;
+    }
+  }
+}
+
+/**
+ * Over-the-horizon-radar "woodpecker": the distinctive rhythmic ~10Hz knock
+ * train left by sweep radars that occasionally pass through 20m/15m --
+ * unlike IgnitionBuzz's fast irregular click train, this is a slow, steady,
+ * unmistakable rhythm. Arrives in rare multi-second episodes rather than
+ * continuously.
+ */
+export class OthrWoodpecker {
+  private samplesUntilNext = 0;
+  private episodeRemaining = 0;
+  private knockPhaseSamples = 0;
+  private knockPeriodSamples: number;
+
+  constructor(private sampleRate: number, private intensity: number) {
+    this.knockPeriodSamples = Math.round(sampleRate / (9 + Math.random() * 2));
+    this.scheduleNext();
+  }
+
+  private scheduleNext(): void {
+    const meanGapSamples = this.sampleRate * (20 + Math.random() * 40);
+    this.samplesUntilNext = Math.round(-Math.log(1 - Math.random()) * meanGapSamples);
+  }
+
+  fillAdd(out: Float32Array): void {
+    for (let i = 0; i < out.length; i++) {
+      if (this.episodeRemaining > 0) {
+        this.episodeRemaining--;
+      } else if (this.samplesUntilNext <= 0) {
+        this.episodeRemaining = Math.round(this.sampleRate * (3 + Math.random() * 6));
+        this.scheduleNext();
+      } else {
+        this.samplesUntilNext--;
+      }
+
+      if (this.episodeRemaining > 0) {
+        this.knockPhaseSamples = (this.knockPhaseSamples + 1) % this.knockPeriodSamples;
+        if (this.knockPhaseSamples < 25) {
+          const t = this.knockPhaseSamples / 25;
           out[i] += (1 - t) * this.intensity * (Math.random() * 2 - 1);
         }
       }
@@ -314,6 +396,8 @@ export class BandNoiseGenerator {
   private birdies: Birdie[];
   private heterodyne: WanderingTone | null = null;
   private ignition: IgnitionBuzz;
+  private smpsHash: SmpsHash;
+  private woodpecker: OthrWoodpecker | null = null;
   private brightener: Biquad | null = null;
   private shaper: Biquad | null = null;
   private shaperHighpass: Biquad | null = null;
@@ -331,14 +415,31 @@ export class BandNoiseGenerator {
 
     // Lower bands pick up far more atmospheric/lightning static.
     const lowBandBoost = Math.max(0, (7000 - band.rangeKHz[0]) / 7000);
-    this.baseCracklesPerSecond = 0.5 + lowBandBoost * 6;
-    const crackleIntensity = 0.15 + lowBandBoost * 0.35;
+    this.baseCracklesPerSecond = 0.8 + lowBandBoost * 7;
+    const crackleIntensity = 0.22 + lowBandBoost * 0.45;
     this.crackle = new AtmosphericCrackle(sampleRate, this.baseCracklesPerSecond, crackleIntensity);
 
     // Power-line/ignition-style buzz is a local-noise phenomenon, not an
     // atmospheric one, but it's still worse on the lower bands in practice
     // (mains harmonics and ignition noise fall off with frequency).
-    this.ignition = new IgnitionBuzz(sampleRate, 100 + Math.random() * 20, 0.5 + lowBandBoost * 0.3);
+    this.ignition = new IgnitionBuzz(sampleRate, 100 + Math.random() * 20, 0.6 + lowBandBoost * 0.35);
+
+    // SMPS/switching-supply hash is the mirror image of the atmospheric/
+    // power-line noise above: it's present everywhere but only becomes
+    // really noticeable on the higher HF bands, where it isn't buried under
+    // atmospheric static the way it is down low. Each instance's random
+    // fundamental/severity stands in for "how close you are to some noisy
+    // switcher," so different bands (and different connections) don't all
+    // sound identically hashy.
+    const highBandBoost = Math.max(0, Math.min(1, (band.rangeKHz[0] - 14000) / 14000));
+    const smpsSeverity = 0.7 + Math.random() * 0.6;
+    this.smpsHash = new SmpsHash(sampleRate, (0.03 + highBandBoost * 0.14) * smpsSeverity);
+
+    // Over-the-horizon radar sweeps are specific to 20m/15m, not a general
+    // band characteristic -- most connections on those bands won't catch an
+    // episode at all, but the ones that do get the unmistakable ~10Hz knock.
+    this.woodpecker =
+      band.id === "20m" || band.id === "15m" ? new OthrWoodpecker(sampleRate, 0.3 + Math.random() * 0.2) : null;
 
     // A couple of faint fixed birdies scattered across the band, as if from
     // internal oscillator harmonics -- cosmetic realism, not tied to any tx.
@@ -429,6 +530,8 @@ export class BandNoiseGenerator {
     this.crackle.setRate(this.baseCracklesPerSecond * crackleRateMultiplier);
     this.crackle.fillAdd(out);
     this.ignition.fillAdd(out);
+    this.smpsHash.fillAdd(out);
+    if (this.woodpecker) this.woodpecker.fillAdd(out);
     for (const b of this.birdies) b.fillAdd(out);
     if (this.heterodyne) this.heterodyne.fillAdd(out);
 
