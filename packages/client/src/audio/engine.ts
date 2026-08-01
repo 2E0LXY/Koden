@@ -351,7 +351,16 @@ export class AudioEngine {
       this.agcCompressor.threshold.value = 0;
       this.agcCompressor.ratio.value = 1;
       this.agcCompressor.knee.value = 0;
+      // The 65x makeup gain below exists to compensate for AGC's ~3:1
+      // compression of the ~55dB propagation range -- with AGC off there's
+      // no compression to compensate for, so that same fixed gain would
+      // massively overdrive even a moderate noise floor straight into heavy
+      // clipping. A real radio with AGC off requires manual RF/AF gain
+      // riding too; this just picks a starting point that isn't immediately
+      // distorted by default.
+      if (this.outputMakeupGain) this.outputMakeupGain.gain.value = 4;
     } else {
+      if (this.outputMakeupGain) this.outputMakeupGain.gain.value = 65;
       // The propagation model's dB scale spans a huge range: from the
       // quietest bands' ambient noise floor (down around -55dB) up to a
       // strong nearby signal (near 0dB) -- roughly 55dB. A real receiver's

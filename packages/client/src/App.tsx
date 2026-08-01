@@ -349,10 +349,16 @@ export function App() {
   // What the S-meter/waterfall actually display: the raw over-the-air
   // signal adjusted for the receiver's own front-end sensitivity, so RF
   // GAIN/ATT/IPO visibly move the needle the same way they change what you
-  // hear, instead of only affecting local audio loudness invisibly.
-  const displaySignalDb = useMemo(
-    () => meter.sMeterDb + rfSensitivityAdjustDb(rx.rfGain, rx.attEnabled, rx.ipoEnabled),
-    [meter.sMeterDb, rx.rfGain, rx.attEnabled, rx.ipoEnabled],
+  // hear, instead of only affecting local audio loudness invisibly. The
+  // noise floor gets the *same* adjustment -- otherwise the waterfall's own
+  // "is there a real signal here" comparison (signal minus floor) would see
+  // a spurious margin from the front-end adjustment alone, showing a false
+  // hot spot at the tuned frequency even with nothing actually there.
+  const rfAdjustDb = rfSensitivityAdjustDb(rx.rfGain, rx.attEnabled, rx.ipoEnabled);
+  const displaySignalDb = useMemo(() => meter.sMeterDb + rfAdjustDb, [meter.sMeterDb, rfAdjustDb]);
+  const displayNoiseFloorDb = useMemo(
+    () => meter.noiseFloorDb + rfAdjustDb,
+    [meter.noiseFloorDb, rfAdjustDb],
   );
 
   // Push transmit state to the server whenever MOX or VOX-triggered state changes.
@@ -825,7 +831,7 @@ export function App() {
       scanning={scanning}
       onToggleScan={() => setScanning((s) => !s)}
       signalDb={displaySignalDb}
-      noiseFloorDb={meter.noiseFloorDb}
+      noiseFloorDb={displayNoiseFloorDb}
       txModLevel={txModLevel}
       audibleStationIds={meter.audibleStationIds}
       roster={roster}

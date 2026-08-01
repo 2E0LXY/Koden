@@ -167,7 +167,16 @@ export class MixerEngine {
       // The test beacon bypasses propagation entirely: a fixed, always-on
       // reference signal at BEACON_SIGNAL_DB for anyone tuned within their
       // passband of BEACON_FREQ_KHZ, regardless of distance or band conditions.
-      const beaconOffsetKHz = Math.abs(BEACON_FREQ_KHZ - rx.freqKHz);
+      // Measured against whichever of the nominal "dial" frequency or the
+      // actual carrier is closer, since a listener sliding down to true
+      // zero beat ends up tuned to the carrier itself (700Hz below the
+      // nominal spot) -- using only the nominal frequency here would gate
+      // the beacon out of the passband exactly where zero beat is meant to
+      // be reachable, since CW's passband is far narrower than that offset.
+      const beaconOffsetKHz = Math.min(
+        Math.abs(BEACON_FREQ_KHZ - rx.freqKHz),
+        Math.abs(BEACON_CARRIER_KHZ - rx.freqKHz),
+      );
       if (beaconOffsetKHz <= passbandKHz(rx.mode, rx.filterWidth) / 2) {
         audibleIds.push(BEACON_ID);
         peakSignalDb = Math.max(peakSignalDb, BEACON_SIGNAL_DB);
@@ -322,7 +331,13 @@ export class MixerEngine {
       if (this.tickCount % METER_EVERY_N_TICKS === 0) {
         this.send(rx.ws, {
           type: "meter",
-          sMeterDb: peakSignalDb === -Infinity ? rxBand.baseNoiseFloorDb : peakSignalDb,
+          // The no-signal fallback must match noiseFloorDb's own reference
+          // frame (mode/night/antenna-adjusted), not the raw band base --
+          // otherwise the two diverge by however much those adjustments
+          // shift the floor (up to ~9dB for CW's narrow-bandwidth gain
+          // alone), which read as a false "signal present" margin to any
+          // client comparing the two (e.g. the waterfall's own-signal bump).
+          sMeterDb: peakSignalDb === -Infinity ? effectiveNoiseFloorDb : peakSignalDb,
           noiseFloorDb: effectiveNoiseFloorDb,
           audibleStationIds: audibleIds,
         });
