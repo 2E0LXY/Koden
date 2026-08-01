@@ -314,7 +314,14 @@ export class SmpsHash {
         this.phases[h] += this.steps[h];
         if (this.phases[h] > Math.PI * 2) this.phases[h] -= Math.PI * 2;
       }
-      out[i] += sum * this.intensity * this.envelope;
+      // `intensity` drives the harmonic stack into a soft-clip *before* a
+      // fixed output ceiling, rather than scaling the output directly -- so
+      // the result stays bounded to a safe, predictable range no matter how
+      // hard intensity gets pushed to survive the client's AGC compression.
+      // Driving harder just saturates the waveform more (more high-order
+      // harmonic distortion), which reads as a rougher buzz rather than
+      // risking clipping downstream.
+      out[i] += Math.tanh(sum * this.envelope * this.intensity) * 0.9;
     }
   }
 }
@@ -413,16 +420,22 @@ export class BandNoiseGenerator {
   ) {
     this.bandId = band.id;
 
-    // Lower bands pick up far more atmospheric/lightning static.
+    // Lower bands pick up far more atmospheric/lightning static. Intensities
+    // here are chosen to survive the client's AGC compressor, which runs an
+    // ~3:1 ratio at a very low (-60dB) threshold -- meaning it's compressing
+    // almost everything almost all the time, shrinking a "clearly audible in
+    // the raw signal" boost down to a barely-there bump by the time it
+    // reaches the ear. These need to be loud in absolute terms, not just
+    // proportionally present, to still read as distinct events post-AGC.
     const lowBandBoost = Math.max(0, (7000 - band.rangeKHz[0]) / 7000);
     this.baseCracklesPerSecond = 0.8 + lowBandBoost * 7;
-    const crackleIntensity = 0.22 + lowBandBoost * 0.45;
+    const crackleIntensity = 0.55 + lowBandBoost * 0.95;
     this.crackle = new AtmosphericCrackle(sampleRate, this.baseCracklesPerSecond, crackleIntensity);
 
     // Power-line/ignition-style buzz is a local-noise phenomenon, not an
     // atmospheric one, but it's still worse on the lower bands in practice
     // (mains harmonics and ignition noise fall off with frequency).
-    this.ignition = new IgnitionBuzz(sampleRate, 100 + Math.random() * 20, 0.6 + lowBandBoost * 0.35);
+    this.ignition = new IgnitionBuzz(sampleRate, 100 + Math.random() * 20, 1.0 + lowBandBoost * 0.5);
 
     // SMPS/switching-supply hash is the mirror image of the atmospheric/
     // power-line noise above: it's present everywhere but only becomes
@@ -433,13 +446,13 @@ export class BandNoiseGenerator {
     // sound identically hashy.
     const highBandBoost = Math.max(0, Math.min(1, (band.rangeKHz[0] - 14000) / 14000));
     const smpsSeverity = 0.7 + Math.random() * 0.6;
-    this.smpsHash = new SmpsHash(sampleRate, (0.03 + highBandBoost * 0.14) * smpsSeverity);
+    this.smpsHash = new SmpsHash(sampleRate, (0.5 + highBandBoost * 5) * smpsSeverity);
 
     // Over-the-horizon radar sweeps are specific to 20m/15m, not a general
     // band characteristic -- most connections on those bands won't catch an
     // episode at all, but the ones that do get the unmistakable ~10Hz knock.
     this.woodpecker =
-      band.id === "20m" || band.id === "15m" ? new OthrWoodpecker(sampleRate, 0.3 + Math.random() * 0.2) : null;
+      band.id === "20m" || band.id === "15m" ? new OthrWoodpecker(sampleRate, 0.7 + Math.random() * 0.35) : null;
 
     // A couple of faint fixed birdies scattered across the band, as if from
     // internal oscillator harmonics -- cosmetic realism, not tied to any tx.
