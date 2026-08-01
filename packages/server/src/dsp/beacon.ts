@@ -158,6 +158,16 @@ export class BeaconToneOscillator {
 
   renderTone(envelope: Float32Array, sampleRate: number, toneHz: number): Float32Array {
     const out = new Float32Array(envelope.length);
+    // At true zero beat (toneHz ~= 0) the phase step is ~0, so accumulated
+    // phase would otherwise freeze at whatever value it last reached --
+    // emitting a keyed constant sin(phase) (a DC-ish offset, audible as
+    // clicks at each Morse envelope transition) instead of real silence.
+    // Reset to a clean phase here so zero beat renders as true silence, and
+    // so retuning away from it afterward resumes from a predictable state.
+    if (Math.abs(toneHz) < 1) {
+      this.phase = 0;
+      return out;
+    }
     const phaseStep = (2 * Math.PI * toneHz) / sampleRate;
     for (let i = 0; i < out.length; i++) {
       out[i] = Math.sin(this.phase) * envelope[i] * 0.8;
