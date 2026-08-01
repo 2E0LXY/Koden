@@ -353,7 +353,7 @@ export class OthrWoodpecker {
   }
 
   private scheduleNext(): void {
-    const meanGapSamples = this.sampleRate * (20 + Math.random() * 40);
+    const meanGapSamples = this.sampleRate * (6 + Math.random() * 14);
     this.samplesUntilNext = Math.round(-Math.log(1 - Math.random()) * meanGapSamples);
   }
 
@@ -411,6 +411,7 @@ export class BandNoiseGenerator {
   private crackle: AtmosphericCrackle;
   private birdies: Birdie[];
   private heterodyne: WanderingTone | null = null;
+  private whistle: WanderingTone | null = null;
   private ignition: IgnitionBuzz;
   private smpsHash: SmpsHash;
   private woodpecker: OthrWoodpecker | null = null;
@@ -437,14 +438,17 @@ export class BandNoiseGenerator {
     // reaches the ear. These need to be loud in absolute terms, not just
     // proportionally present, to still read as distinct events post-AGC.
     const lowBandBoost = Math.max(0, (7000 - band.rangeKHz[0]) / 7000);
-    this.baseCracklesPerSecond = 0.8 + lowBandBoost * 7;
-    const crackleIntensity = 0.5 + lowBandBoost * 0.75;
+    // Rate stays modest even though each event now has real duration
+    // (~8-23ms): overlapping events at a high rate would blur into a
+    // continuous wash instead of standing out as discrete pops.
+    this.baseCracklesPerSecond = 0.7 + lowBandBoost * 3.5;
+    const crackleIntensity = 1.2 + lowBandBoost * 1.8;
     this.crackle = new AtmosphericCrackle(sampleRate, this.baseCracklesPerSecond, crackleIntensity);
 
     // Power-line/ignition-style buzz is a local-noise phenomenon, not an
     // atmospheric one, but it's still worse on the lower bands in practice
     // (mains harmonics and ignition noise fall off with frequency).
-    this.ignition = new IgnitionBuzz(sampleRate, 100 + Math.random() * 20, 1.0 + lowBandBoost * 0.5);
+    this.ignition = new IgnitionBuzz(sampleRate, 100 + Math.random() * 20, 1.8 + lowBandBoost * 1.0);
 
     // SMPS/switching-supply hash is the mirror image of the atmospheric/
     // power-line noise above: it's present everywhere but only becomes
@@ -452,16 +456,30 @@ export class BandNoiseGenerator {
     // atmospheric static the way it is down low. Each instance's random
     // fundamental/severity stands in for "how close you are to some noisy
     // switcher," so different bands (and different connections) don't all
-    // sound identically hashy.
+    // sound identically hashy. This one is continuous (unlike the sparse
+    // events above), so it directly sets the ambient floor -- kept more
+    // modest than the transient events to leave headroom for them to stand
+    // out clearly rather than just raising a wall of noise.
     const highBandBoost = Math.max(0, Math.min(1, (band.rangeKHz[0] - 14000) / 14000));
     const smpsSeverity = 0.7 + Math.random() * 0.6;
-    this.smpsHash = new SmpsHash(sampleRate, (0.3 + highBandBoost * 1.8) * smpsSeverity);
+    this.smpsHash = new SmpsHash(sampleRate, (0.4 + highBandBoost * 2.0) * smpsSeverity);
 
     // Over-the-horizon radar sweeps are specific to 20m/15m, not a general
     // band characteristic -- most connections on those bands won't catch an
     // episode at all, but the ones that do get the unmistakable ~10Hz knock.
     this.woodpecker =
-      band.id === "20m" || band.id === "15m" ? new OthrWoodpecker(sampleRate, 0.7 + Math.random() * 0.35) : null;
+      band.id === "20m" || band.id === "15m" ? new OthrWoodpecker(sampleRate, 1.4 + Math.random() * 0.6) : null;
+
+    // A general heterodyne "whistle" -- a nearby station's carrier beating
+    // against your own as you tune near it -- independent of AM's own
+    // heterodyne above, so USB/LSB/CW/FM connections get a real whistle too,
+    // not just AM. Not every connection has a station sitting close enough
+    // to produce one, so it's only present some of the time. Kept within
+    // 400-1000Hz so it survives CW's narrow bandpass as well as SSB's wider
+    // window instead of being filtered out entirely on some modes.
+    if (Math.random() < 0.65) {
+      this.whistle = new WanderingTone(sampleRate, 400, 1000, 0.5 + Math.random() * 0.4, 60);
+    }
 
     // A couple of faint fixed birdies scattered across the band, as if from
     // internal oscillator harmonics -- cosmetic realism, not tied to any tx.
@@ -556,6 +574,7 @@ export class BandNoiseGenerator {
     if (this.woodpecker) this.woodpecker.fillAdd(out);
     for (const b of this.birdies) b.fillAdd(out);
     if (this.heterodyne) this.heterodyne.fillAdd(out);
+    if (this.whistle) this.whistle.fillAdd(out);
 
     // The mode filter shapes *everything* reaching the ear (atmospheric
     // noise, crackle, birdies alike), not just the raw pink noise -- and the
@@ -567,7 +586,14 @@ export class BandNoiseGenerator {
     if (this.brightener) this.brightener.processInPlace(out);
 
     const gain = dbToLinear(noiseFloorDb) * this.shaperMakeupGain;
-    for (let i = 0; i < out.length; i++) out[i] *= gain;
+    for (let i = 0; i < out.length; i++) {
+      // A final soft-clip safety net: transparent for anything in the normal
+      // quiet range (tanh(x) ~= x for small x), but guarantees interference
+      // intensities can be pushed as hard as needed for real audibility
+      // without fragile manual headroom arithmetic for every combination of
+      // band/mode/simultaneous-effects risking clipping downstream.
+      out[i] = Math.tanh(out[i] * gain);
+    }
     return out;
   }
 }
