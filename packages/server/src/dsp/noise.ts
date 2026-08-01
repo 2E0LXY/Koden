@@ -159,13 +159,16 @@ export class AtmosphericCrackle {
   fillAdd(out: Float32Array): void {
     for (let i = 0; i < out.length; i++) {
       if (this.decayRemaining > 0) {
+        // A real static crash has an audible decaying "tail," not just an
+        // instantaneous tick -- 0.75/sample dies out in well under a
+        // millisecond, too brief to register as a discrete "pop" at all.
         out[i] += this.decayGain * this.intensity;
-        this.decayGain *= 0.75;
+        this.decayGain *= 0.96;
         this.decayRemaining--;
       }
       if (this.samplesUntilNext <= 0) {
         this.decayGain = 0.6 + Math.random() * 0.4;
-        this.decayRemaining = 20 + Math.floor(Math.random() * 60);
+        this.decayRemaining = Math.round(this.sampleRate * (0.008 + Math.random() * 0.015));
         this.scheduleNext();
       } else {
         this.samplesUntilNext--;
@@ -273,8 +276,12 @@ export class IgnitionBuzz {
 
       if (this.burstRemaining > 0) {
         this.phaseSamples = (this.phaseSamples + 1) % this.periodSamples;
-        if (this.phaseSamples < 6) {
-          const t = this.phaseSamples / 6;
+        // Each click needs real duration (a few ms) to read as an audible
+        // "tick" at all -- the previous 6-sample width (under half a
+        // millisecond) was too brief to perceive as a discrete event.
+        const clickSamples = 40;
+        if (this.phaseSamples < clickSamples) {
+          const t = this.phaseSamples / clickSamples;
           out[i] += (1 - t) * this.intensity * (Math.random() * 2 - 1);
         }
       }
@@ -314,14 +321,15 @@ export class SmpsHash {
         this.phases[h] += this.steps[h];
         if (this.phases[h] > Math.PI * 2) this.phases[h] -= Math.PI * 2;
       }
-      // `intensity` drives the harmonic stack into a soft-clip *before* a
-      // fixed output ceiling, rather than scaling the output directly -- so
-      // the result stays bounded to a safe, predictable range no matter how
-      // hard intensity gets pushed to survive the client's AGC compression.
-      // Driving harder just saturates the waveform more (more high-order
-      // harmonic distortion), which reads as a rougher buzz rather than
-      // risking clipping downstream.
-      out[i] += Math.tanh(sum * this.envelope * this.intensity) * 0.9;
+      // A fixed, modest drive into the soft-clip keeps the waveform only
+      // lightly saturated -- enough to add some rough edge, but not so much
+      // that the distinct harmonics smear into generic broadband mush (an
+      // earlier version drove this directly with `intensity`, which at the
+      // levels needed to survive AGC compression crushed the tone into
+      // characterless extra noise instead of a recognizable buzz).
+      // `intensity` instead scales the *output* directly, so it can still be
+      // pushed as loud as needed without touching the waveshape.
+      out[i] += Math.tanh(sum * this.envelope * 1.3) * this.intensity;
     }
   }
 }
@@ -362,8 +370,9 @@ export class OthrWoodpecker {
 
       if (this.episodeRemaining > 0) {
         this.knockPhaseSamples = (this.knockPhaseSamples + 1) % this.knockPeriodSamples;
-        if (this.knockPhaseSamples < 25) {
-          const t = this.knockPhaseSamples / 25;
+        const knockSamples = 45;
+        if (this.knockPhaseSamples < knockSamples) {
+          const t = this.knockPhaseSamples / knockSamples;
           out[i] += (1 - t) * this.intensity * (Math.random() * 2 - 1);
         }
       }
@@ -429,7 +438,7 @@ export class BandNoiseGenerator {
     // proportionally present, to still read as distinct events post-AGC.
     const lowBandBoost = Math.max(0, (7000 - band.rangeKHz[0]) / 7000);
     this.baseCracklesPerSecond = 0.8 + lowBandBoost * 7;
-    const crackleIntensity = 0.55 + lowBandBoost * 0.95;
+    const crackleIntensity = 0.5 + lowBandBoost * 0.75;
     this.crackle = new AtmosphericCrackle(sampleRate, this.baseCracklesPerSecond, crackleIntensity);
 
     // Power-line/ignition-style buzz is a local-noise phenomenon, not an
@@ -446,7 +455,7 @@ export class BandNoiseGenerator {
     // sound identically hashy.
     const highBandBoost = Math.max(0, Math.min(1, (band.rangeKHz[0] - 14000) / 14000));
     const smpsSeverity = 0.7 + Math.random() * 0.6;
-    this.smpsHash = new SmpsHash(sampleRate, (0.5 + highBandBoost * 5) * smpsSeverity);
+    this.smpsHash = new SmpsHash(sampleRate, (0.3 + highBandBoost * 1.8) * smpsSeverity);
 
     // Over-the-horizon radar sweeps are specific to 20m/15m, not a general
     // band characteristic -- most connections on those bands won't catch an
