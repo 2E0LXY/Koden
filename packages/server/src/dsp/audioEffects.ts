@@ -47,6 +47,77 @@ export class MultipathFilter {
   }
 }
 
+/**
+ * Real SSB reception recovers audio by beating the incoming sideband
+ * against a locally re-injected carrier (BFO); if a listener's tuning
+ * doesn't land exactly on the transmitter's real frequency, every
+ * component of the recovered voice is shifted by that same fixed Hz
+ * offset -- not a proportional pitch scaling -- which detunes harmonic
+ * ratios and produces the classic "Donald Duck" (shifted up) or
+ * deep/muffled "monster" (shifted down) voice. Implemented as a
+ * frequency-domain-style single-sideband shifter: an FIR Hilbert
+ * transformer builds the 90-degree-shifted (quadrature) signal, and
+ * modulating the analytic pair by a complex exponential at the offset
+ * frequency shifts every component by exactly that many Hz.
+ */
+export class SsbFrequencyShifter {
+  private readonly hilbertCoeffs: Float32Array;
+  private readonly delay: number;
+  private readonly history: Float32Array;
+  private historyPos = 0;
+  private phase = 0;
+
+  constructor(private sampleRate: number, taps = 65) {
+    // Odd-length antisymmetric (Type III) discrete Hilbert transform FIR:
+    // zero on even-indexed taps, 2/(pi*m) on odd ones (m measured from the
+    // center), windowed to tame ringing from the abrupt ideal response.
+    const n = taps % 2 === 0 ? taps + 1 : taps;
+    const center = (n - 1) / 2;
+    const coeffs = new Float32Array(n);
+    for (let k = 0; k < n; k++) {
+      const m = k - center;
+      if (m === 0 || m % 2 === 0) continue;
+      const ideal = 2 / (Math.PI * m);
+      const window = 0.54 - 0.46 * Math.cos((2 * Math.PI * k) / (n - 1)); // Hamming
+      coeffs[k] = ideal * window;
+    }
+    this.hilbertCoeffs = coeffs;
+    this.delay = center;
+    this.history = new Float32Array(n);
+  }
+
+  /** Shift every frequency component of `buf` by `shiftHz` (positive = upward), in place. */
+  processInPlace(buf: Float32Array, shiftHz: number): void {
+    if (shiftHz === 0) return;
+    const n = this.hilbertCoeffs.length;
+    const phaseStep = (2 * Math.PI * shiftHz) / this.sampleRate;
+
+    for (let i = 0; i < buf.length; i++) {
+      this.history[this.historyPos] = buf[i];
+
+      // Convolve the FIR against the circular history buffer to get the
+      // quadrature component, and read back the real component delayed by
+      // the FIR's group delay so the two stay time-aligned.
+      let quadrature = 0;
+      for (let k = 0; k < n; k++) {
+        const c = this.hilbertCoeffs[k];
+        if (c === 0) continue;
+        const idx = (this.historyPos - k + n * 4) % n;
+        quadrature += c * this.history[idx];
+      }
+      const delayedIdx = (this.historyPos - this.delay + n * 4) % n;
+      const real = this.history[delayedIdx];
+
+      buf[i] = real * Math.cos(this.phase) - quadrature * Math.sin(this.phase);
+
+      this.historyPos = (this.historyPos + 1) % n;
+      this.phase += phaseStep;
+      if (this.phase > Math.PI * 2) this.phase -= Math.PI * 2;
+      else if (this.phase < -Math.PI * 2) this.phase += Math.PI * 2;
+    }
+  }
+}
+
 const MODE_BAND_EDGES: Record<Mode, { lowHz: number; highHz: number }> = {
   CW: { lowHz: 500, highHz: 900 },
   RTTY: { lowHz: 400, highHz: 1600 },

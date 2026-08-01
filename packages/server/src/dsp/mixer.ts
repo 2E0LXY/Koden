@@ -14,17 +14,24 @@ import {
 } from "@koden/shared";
 import type { Station } from "../stationManager.js";
 import { StationManager } from "../stationManager.js";
-import { PropagationEngine, passbandKHz } from "./propagation.js";
+import { PropagationEngine, passbandKHz, type PropagationResult } from "./propagation.js";
 import { SporadicEEngine } from "./sporadicE.js";
 import { BandNoiseGenerator, dbToLinear, modeNoiseGainDb } from "./noise.js";
-import { MultipathFilter, TxBandwidthFilter, applySplatterColorInPlace } from "./audioEffects.js";
+import {
+  MultipathFilter,
+  SsbFrequencyShifter,
+  TxBandwidthFilter,
+  applySplatterColorInPlace,
+} from "./audioEffects.js";
 import { int16ToFloat32, float32ToInt16 } from "./pcm.js";
-import { BEACON_FREQ_KHZ, BEACON_ID, BEACON_SIGNAL_DB, MorseBeacon } from "./beacon.js";
+import { BEACON_CARRIER_KHZ, BEACON_FREQ_KHZ, BEACON_ID, BEACON_SIGNAL_DB, MorseBeacon } from "./beacon.js";
 
 const AUDIBLE_THRESHOLD_DB = -38;
 const METER_EVERY_N_TICKS = 4;
 /** dB above threshold at which FM's capture effect has essentially silenced the background noise. */
 const FM_CAPTURE_RANGE_DB = 26;
+/** dB margin within which two competing FM signals are "too close to call" -- the discriminator flip-flops between them instead of cleanly capturing one. */
+const FM_CAPTURE_CONTEST_DB = 4;
 
 interface RxNoiseState {
   bandId: string;
@@ -42,6 +49,7 @@ export class MixerEngine {
   private noiseByStation = new Map<string, RxNoiseState>();
   private txBandwidthByStation = new Map<string, TxBandwidthState>();
   private multipathByPair = new Map<string, MultipathFilter>();
+  private ssbShifterByPair = new Map<string, SsbFrequencyShifter>();
   private tickCount = 0;
   private beacon = new MorseBeacon("KODEN BEACON", 10, 7);
 
@@ -57,6 +65,9 @@ export class MixerEngine {
     this.txBandwidthByStation.delete(id);
     for (const key of [...this.multipathByPair.keys()]) {
       if (key.startsWith(`${id}:`) || key.endsWith(`:${id}`)) this.multipathByPair.delete(key);
+    }
+    for (const key of [...this.ssbShifterByPair.keys()]) {
+      if (key.startsWith(`${id}:`) || key.endsWith(`:${id}`)) this.ssbShifterByPair.delete(key);
     }
   }
 
@@ -75,6 +86,15 @@ export class MixerEngine {
     const filter = new MultipathFilter(this.sampleRate);
     this.multipathByPair.set(key, filter);
     return filter;
+  }
+
+  private getSsbShifter(tx: Station, rx: Station): SsbFrequencyShifter {
+    const key = `${tx.id}:${rx.id}`;
+    const existing = this.ssbShifterByPair.get(key);
+    if (existing) return existing;
+    const shifter = new SsbFrequencyShifter(this.sampleRate);
+    this.ssbShifterByPair.set(key, shifter);
+    return shifter;
   }
 
   private getNoiseGenerator(rx: Station, band: Band): BandNoiseGenerator {
@@ -109,10 +129,11 @@ export class MixerEngine {
       }
     }
 
-    // Generated once per tick (not per listener) so its internal oscillator
-    // phase and keying clock advance in real time regardless of how many
-    // stations are tuned in to hear it.
-    const beaconFrame = this.beacon.nextFrame(nowMs, this.sampleRate, FRAME_SAMPLES);
+    // The keying on/off timing is identical for every listener, so it's
+    // computed once per tick; the tone pitch itself is rendered separately
+    // per listener below, since real CW's beat-note pitch depends on each
+    // listener's own tuning relative to the beacon's carrier.
+    const beaconEnvelope = this.beacon.nextEnvelope(nowMs, this.sampleRate, FRAME_SAMPLES);
     const beaconGain = dbToLinear(Math.min(BEACON_SIGNAL_DB, 0));
 
     for (const rx of all) {
@@ -133,8 +154,20 @@ export class MixerEngine {
       if (beaconOffsetKHz <= passbandKHz(rx.mode, rx.filterWidth) / 2) {
         audibleIds.push(BEACON_ID);
         peakSignalDb = Math.max(peakSignalDb, BEACON_SIGNAL_DB);
+        // Real CW's pitch is the beat note between the carrier and each
+        // listener's own tuning -- it slides as you tune and passes through
+        // silence exactly on frequency (zero beat), instead of a fixed tone.
+        const beaconToneHz = Math.abs((rx.freqKHz - BEACON_CARRIER_KHZ) * 1000);
+        const beaconFrame = MorseBeacon.renderTone(beaconEnvelope, nowMs, this.sampleRate, beaconToneHz);
         for (let i = 0; i < output.length; i++) output[i] += beaconFrame[i] * beaconGain;
       }
+
+      // FM has a real "capture effect": the discriminator locks onto
+      // whichever signal is strongest and suppresses the rest entirely,
+      // unlike AM/SSB/CW where every audible signal blends together
+      // additively. Collected here instead of mixed immediately so the
+      // winner can be picked after seeing every candidate.
+      const fmCandidates: { tx: Station; result: PropagationResult; audio: Float32Array }[] = [];
 
       for (const tx of transmitters) {
         if (tx.id === rx.id) continue;
@@ -185,21 +218,54 @@ export class MixerEngine {
           });
         }
 
-        const gainDb = Math.min(result.signalDb, 0);
-        const gain = dbToLinear(gainDb);
         int16ToFloat32(tx.pendingFrame!, scratch);
 
         // Band-limit to the transmitter's own mode bandwidth (every listener
         // hears the same occupied bandwidth regardless of their own filter),
-        // then layer sweeping frequency-selective multipath fading, then
-        // (if this path is arriving as adjacent-channel splatter rather than
-        // cleanly in-passband) a soft-clip to make it read as distorted
-        // bleed-through rather than a clean quiet copy.
+        // then -- for SSB -- shift the recovered audio by the listener's BFO
+        // mismatch (their tuning vs. the transmitter's real frequency), then
+        // layer sweeping frequency-selective multipath fading, then (if this
+        // path is arriving as adjacent-channel splatter rather than cleanly
+        // in-passband) a soft-clip to make it read as distorted bleed-through
+        // rather than a clean quiet copy.
         this.getTxBandwidthFilter(tx).processInPlace(scratch);
+        if (rx.mode === "USB" || rx.mode === "LSB") {
+          const offsetHz = (rx.freqKHz - tx.txFreqKHz) * 1000;
+          const shiftHz = rx.mode === "USB" ? -offsetHz : offsetHz;
+          this.getSsbShifter(tx, rx).processInPlace(scratch, shiftHz);
+        }
         this.getMultipathFilter(tx, rx).processInPlace(scratch, result.multipathDepth);
         if (result.splatterZone) applySplatterColorInPlace(scratch);
 
+        if (rx.mode === "FM") {
+          fmCandidates.push({ tx, result, audio: scratch.slice() });
+          continue;
+        }
+
+        const gain = dbToLinear(Math.min(result.signalDb, 0));
         for (let i = 0; i < output.length; i++) output[i] += scratch[i] * gain;
+      }
+
+      if (fmCandidates.length > 0) {
+        fmCandidates.sort((a, b) => b.result.signalDb - a.result.signalDb);
+        const strongest = fmCandidates[0];
+        const runnerUp = fmCandidates[1];
+        if (runnerUp && strongest.result.signalDb - runnerUp.result.signalDb < FM_CAPTURE_CONTEST_DB) {
+          // Too close to call: the discriminator flip-flops rapidly between
+          // the two signals, producing fluttering, distorted audio instead
+          // of a clean capture.
+          const chunkSamples = 24;
+          let useStrongest = true;
+          for (let i = 0; i < output.length; i++) {
+            if (i % chunkSamples === 0) useStrongest = Math.random() < 0.5;
+            const winner = useStrongest ? strongest : runnerUp;
+            const gain = dbToLinear(Math.min(winner.result.signalDb, 0));
+            output[i] += winner.audio[i] * gain * 0.85;
+          }
+        } else {
+          const gain = dbToLinear(Math.min(strongest.result.signalDb, 0));
+          for (let i = 0; i < output.length; i++) output[i] += strongest.audio[i] * gain;
+        }
       }
 
       // Real receiver noise power scales with passband bandwidth (a narrow

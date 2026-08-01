@@ -112,7 +112,12 @@ export function Waterfall({
     };
 
     const draw = () => {
-      const level = Math.max(0, Math.min(1, (signalRef.current + 95) / 110));
+      // The server reports the S-meter as the band's own noise floor (not
+      // "no signal") whenever nothing is actually audible, so a real bump
+      // has to be sized by how far the signal rises *above* that floor --
+      // using the raw absolute level would paint a permanent hot spot at
+      // the tuned frequency even with nothing there.
+      const level = Math.max(0, Math.min(1, (signalRef.current - noiseFloorRef.current) / 40));
       const floorLevel = Math.max(0, Math.min(1, (noiseFloorRef.current + 95) / 110));
       const ownOffsetKHz = tunedRef.current - windowCenterRef.current;
       const ownX = WIDTH / 2 + (ownOffsetKHz / spanKHz) * WIDTH;
