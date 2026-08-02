@@ -483,6 +483,35 @@ export function App() {
     beep(1500, 100);
   }, [memIndex, activeVfoState]);
 
+  /** Left-click on a memory bank button: program the current VFO into that slot. */
+  const onMemoryProgram = useCallback(
+    (idx: number) => {
+      setMemory((prev) => {
+        const next = [...prev];
+        next[idx] = activeVfoState;
+        return next;
+      });
+      setMemIndex(idx);
+      beep(1500, 100);
+    },
+    [activeVfoState],
+  );
+
+  /** Right-click on a memory bank button: recall that slot into the active VFO. */
+  const onMemoryRecall = useCallback(
+    (idx: number) => {
+      const slot = memory[idx];
+      if (!slot) {
+        beep(220, 150);
+        return;
+      }
+      setActiveVfoState(slot);
+      setMemIndex(idx);
+      beep(660, 80);
+    },
+    [memory, setActiveVfoState],
+  );
+
   const onTuneKnob = useCallback(
     (freqKHz: number) => {
       if (vfoLocked) return;
@@ -802,6 +831,9 @@ export function App() {
       memIndex={memIndex}
       onMemToVfo={() => cycleMemory(1)}
       onMemIn={onMemIn}
+      memory={memory}
+      onMemoryProgram={onMemoryProgram}
+      onMemoryRecall={onMemoryRecall}
       memScanActive={memScanActive}
       onToggleMemScan={() => setMemScanActive((s) => !s)}
       mox={mox}

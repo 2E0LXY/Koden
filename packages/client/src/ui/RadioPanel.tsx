@@ -15,6 +15,7 @@ import { RotatorCompass } from "./RotatorCompass.js";
 import { AntennaMap } from "./AntennaMap.js";
 import { SetupPanel } from "./SetupPanel.js";
 import { FreqKeypad } from "./FreqKeypad.js";
+import { MemoryBank } from "./MemoryBank.js";
 
 interface VfoDisplay {
   freqKHz: number;
@@ -103,6 +104,9 @@ interface RadioPanelProps {
   memIndex: number;
   onMemToVfo: () => void;
   onMemIn: () => void;
+  memory: (VfoDisplay | null)[];
+  onMemoryProgram: (idx: number) => void;
+  onMemoryRecall: (idx: number) => void;
   memScanActive: boolean;
   onToggleMemScan: () => void;
 
@@ -229,6 +233,9 @@ export function RadioPanel(props: RadioPanelProps) {
     memIndex,
     onMemToVfo,
     onMemIn,
+    memory,
+    onMemoryProgram,
+    onMemoryRecall,
     memScanActive,
     onToggleMemScan,
     mox,
@@ -618,6 +625,8 @@ export function RadioPanel(props: RadioPanelProps) {
               <PanelButton small label="VFO/M" active={vfoMMode === "M"} onClick={onToggleVfoM} />
             </div>
           </div>
+
+          <MemoryBank memory={memory} activeIndex={memIndex} onProgram={onMemoryProgram} onRecall={onMemoryRecall} />
 
           <div className="knob-row">
             <Knob
