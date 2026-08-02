@@ -173,6 +173,10 @@ export class MixerEngine {
     const keyedIntoParrot = new Set(
       all.filter((s) => s.transmitting && inParrotPassband(s)).map((s) => s.id),
     );
+    const parrotModesById = new Map<string, Station["mode"]>();
+    for (const s of all) {
+      if (keyedIntoParrot.has(s.id)) parrotModesById.set(s.id, s.mode);
+    }
     const parrotFramesById = new Map<string, Float32Array>();
     for (const tx of transmitters) {
       if (!inParrotPassband(tx)) continue;
@@ -180,7 +184,7 @@ export class MixerEngine {
       int16ToFloat32(tx.pendingFrame!, frame);
       parrotFramesById.set(tx.id, frame);
     }
-    this.parrot.tick(nowMs, keyedIntoParrot, parrotFramesById);
+    this.parrot.tick(nowMs, keyedIntoParrot, parrotFramesById, parrotModesById);
     const parrotFrame = this.parrot.nextFrame();
     const parrotGain = dbToLinear(Math.min(PARROT_SIGNAL_DB, 0));
 
