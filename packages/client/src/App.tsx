@@ -361,6 +361,11 @@ export function App() {
     [meter.noiseFloorDb, rfAdjustDb],
   );
 
+  const getLiveLevel = useCallback(
+    () => audioEngineRef.current?.getRxLevel() ?? { rms: 0, peak: 0 },
+    [],
+  );
+
   // Push transmit state to the server whenever MOX or VOX-triggered state changes.
   const prevTransmittingRef = useRef(false);
   useEffect(() => {
@@ -832,6 +837,7 @@ export function App() {
       onToggleScan={() => setScanning((s) => !s)}
       signalDb={displaySignalDb}
       noiseFloorDb={displayNoiseFloorDb}
+      getLiveLevel={getLiveLevel}
       txModLevel={txModLevel}
       audibleStationIds={meter.audibleStationIds}
       roster={roster}

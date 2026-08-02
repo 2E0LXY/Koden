@@ -91,6 +91,7 @@ export class AudioEngine {
   private afGainNode: GainNode | null = null;
   private squelchGate: GainNode | null = null;
   private outputMakeupGain: GainNode | null = null;
+  private rxAnalyser: AnalyserNode | null = null;
 
   // Transmit chain nodes.
   private micGainNode: GainNode | null = null;
@@ -166,6 +167,11 @@ export class AudioEngine {
     // ambient noise floor becomes audible without the loudest realistic
     // signals clipping (see AGC settings above for the full reasoning).
     this.outputMakeupGain = new GainNode(context, { gain: 65 });
+    // Tapped after everything else (including the squelch gate), so the
+    // level it reports is exactly what's actually audible right now --
+    // real signal, real interference, correctly silent when squelched --
+    // rather than a synthetic/estimated value.
+    this.rxAnalyser = new AnalyserNode(context, { fftSize: 512 });
 
     this.playbackNode
       .connect(this.ifShiftFilter)
@@ -180,6 +186,7 @@ export class AudioEngine {
       .connect(this.squelchGate)
       .connect(this.outputMakeupGain)
       .connect(context.destination);
+    this.outputMakeupGain.connect(this.rxAnalyser);
 
     this.applyReceiveParams();
   }
@@ -288,6 +295,27 @@ export class AudioEngine {
     let sum = 0;
     for (const v of buf) sum += v * v;
     return Math.sqrt(sum / buf.length);
+  }
+
+  /**
+   * Current receive playback level -- RMS (0..1, general loudness) and peak
+   * (0..1, catches brief transients an RMS average would smooth over, like
+   * a single crackle pop) -- read directly off the actual audio being
+   * played back, so the S-meter and waterfall can reflect real signal and
+   * interference activity as it happens rather than only the server's
+   * periodic (and comparatively coarse) meter reports.
+   */
+  getRxLevel(): { rms: number; peak: number } {
+    if (!this.rxAnalyser) return { rms: 0, peak: 0 };
+    const buf = new Float32Array(this.rxAnalyser.fftSize);
+    this.rxAnalyser.getFloatTimeDomainData(buf);
+    let sum = 0;
+    let peak = 0;
+    for (const v of buf) {
+      sum += v * v;
+      peak = Math.max(peak, Math.abs(v));
+    }
+    return { rms: Math.sqrt(sum / buf.length), peak };
   }
 
   setCompLevel(level: number): void {
