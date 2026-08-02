@@ -161,17 +161,26 @@ export class MixerEngine {
     const beaconEnvelope = this.beacon.nextEnvelope(nowMs, this.sampleRate, FRAME_SAMPLES);
     const beaconGain = dbToLinear(Math.min(BEACON_SIGNAL_DB, 0));
 
-    // Anyone transmitting into the parrot's own passband this tick is a
+    // Anyone keyed (PTT held) into the parrot's own passband this tick is a
     // candidate to record; advancing/recording happens once per tick here
     // (not per listener), same reasoning as the beacon's envelope above.
-    const parrotCandidates = transmitters
-      .filter((tx) => Math.abs(tx.txFreqKHz - PARROT_FREQ_KHZ) <= passbandKHz(tx.mode, tx.filterWidth) / 2)
-      .map((tx) => {
-        const frame = new Float32Array(FRAME_SAMPLES);
-        int16ToFloat32(tx.pendingFrame!, frame);
-        return { id: tx.id, frame };
-      });
-    this.parrot.tick(nowMs, parrotCandidates);
+    // Keyed status and frame availability are tracked separately -- a
+    // single tick's mic frame can legitimately go missing (network/
+    // scheduling jitter) without the station's PTT actually releasing, and
+    // the parrot must not mistake that for "recording finished."
+    const inParrotPassband = (s: { txFreqKHz: number; mode: Station["mode"]; filterWidth: Station["filterWidth"] }) =>
+      Math.abs(s.txFreqKHz - PARROT_FREQ_KHZ) <= passbandKHz(s.mode, s.filterWidth) / 2;
+    const keyedIntoParrot = new Set(
+      all.filter((s) => s.transmitting && inParrotPassband(s)).map((s) => s.id),
+    );
+    const parrotFramesById = new Map<string, Float32Array>();
+    for (const tx of transmitters) {
+      if (!inParrotPassband(tx)) continue;
+      const frame = new Float32Array(FRAME_SAMPLES);
+      int16ToFloat32(tx.pendingFrame!, frame);
+      parrotFramesById.set(tx.id, frame);
+    }
+    this.parrot.tick(nowMs, keyedIntoParrot, parrotFramesById);
     const parrotFrame = this.parrot.nextFrame();
     const parrotGain = dbToLinear(Math.min(PARROT_SIGNAL_DB, 0));
 

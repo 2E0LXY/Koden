@@ -29,7 +29,7 @@ interface WaterfallProps {
 }
 
 const WIDTH = 320;
-const HEIGHT = 120;
+const HEIGHT = 194;
 const SCOPE_HEIGHT = 26;
 const FALL_TOP = SCOPE_HEIGHT + 2;
 const FALL_HEIGHT = HEIGHT - FALL_TOP;

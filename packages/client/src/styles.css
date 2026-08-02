@@ -136,11 +136,17 @@ button {
   margin-top: 2px;
 }
 
-.panel__dual-display {
+.panel__lcd-col {
   flex: 1;
   display: flex;
-  gap: 12px;
+  flex-direction: column;
+  gap: 10px;
   min-width: 620px;
+}
+
+.panel__dual-display {
+  display: flex;
+  gap: 12px;
 }
 
 .panel__scope-display {
@@ -228,14 +234,15 @@ button {
   margin-top: 8px;
 }
 .panel__display .waterfall canvas {
-  height: 70px;
+  height: 144px;
 }
 .panel__display--big-scope .waterfall canvas {
-  height: 160px;
+  height: 234px;
 }
 
 .panel__display-row {
   display: flex;
+  justify-content: center;
   gap: 18px;
   font-size: 13px;
   letter-spacing: 1px;
@@ -259,6 +266,7 @@ button {
   letter-spacing: 1px;
   text-shadow: 0 0 12px rgba(232, 184, 75, 0.5);
   margin: 2px 0;
+  text-align: center;
 }
 
 .panel__indicator {
@@ -537,18 +545,22 @@ button {
 }
 
 .memory-bank {
-  margin-top: 8px;
+  background: #0c0c0d;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 8px;
 }
 .memory-bank__label {
   color: #7a6a3f;
   font-size: 9px;
   letter-spacing: 0.5px;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+  text-align: center;
 }
 .memory-bank__grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 4px;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 5px;
 }
 .memory-bank__key {
   background: linear-gradient(#2c2c30, #1c1c1f);
@@ -556,10 +568,23 @@ button {
   border-radius: 4px;
   color: #665a3a;
   font-family: "Courier New", monospace;
-  font-size: 12px;
-  font-weight: 700;
   cursor: pointer;
-  min-height: 24px;
+  min-height: 38px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  touch-action: none;
+  user-select: none;
+}
+.memory-bank__key-idx {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.memory-bank__key-freq {
+  font-size: 10px;
+  font-weight: 700;
 }
 .memory-bank__key:hover {
   background: linear-gradient(#38383c, #232326);

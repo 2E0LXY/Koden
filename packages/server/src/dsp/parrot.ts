@@ -34,26 +34,36 @@ export class ParrotEcho {
 
   /**
    * Call once per tick (not per listener) with whichever stations are
-   * currently transmitting into the parrot's passband this tick. Claims
-   * the first such station as the current recording when idle, appends
-   * its frame while that same station keeps transmitting, and starts the
-   * replay countdown once it stops.
+   * currently keyed (PTT held) into the parrot's passband this tick, plus
+   * whichever of those actually had a fresh audio frame arrive this tick.
+   * These are deliberately kept separate: a station's mic frame can
+   * legitimately miss a single 20ms tick window (network/scheduling
+   * jitter) without its PTT actually having been released, and treating a
+   * missed frame as "released" would truncate the recording essentially
+   * at random -- exactly what made this intermittent. Recording only ends
+   * when the station's PTT itself goes false (or it disconnects).
+   *
+   * Claims the first keyed station as the current recording when idle,
+   * appends its frame while that same station keeps transmitting (or
+   * simply holds the gap if this particular tick had no frame yet), and
+   * starts the replay countdown once its PTT actually releases.
    */
-  tick(nowMs: number, transmittingIntoParrot: { id: string; frame: Float32Array }[]): void {
+  tick(nowMs: number, keyedIntoParrot: Set<string>, framesById: ReadonlyMap<string, Float32Array>): void {
     if (this.state === "idle") {
-      const first = transmittingIntoParrot[0];
-      if (first) {
+      const [firstId] = keyedIntoParrot;
+      if (firstId !== undefined) {
         this.state = "recording";
-        this.recordingStationId = first.id;
-        this.frames = [first.frame.slice()];
+        this.recordingStationId = firstId;
+        const frame = framesById.get(firstId);
+        this.frames = frame ? [frame.slice()] : [];
       }
       return;
     }
 
     if (this.state === "recording") {
-      const mine = transmittingIntoParrot.find((c) => c.id === this.recordingStationId);
-      if (mine) {
-        if (this.frames.length < this.maxFrames) this.frames.push(mine.frame.slice());
+      if (keyedIntoParrot.has(this.recordingStationId!)) {
+        const frame = framesById.get(this.recordingStationId!);
+        if (frame && this.frames.length < this.maxFrames) this.frames.push(frame.slice());
         return;
       }
       // The recording station released PTT (or dropped) -- queue the replay.
