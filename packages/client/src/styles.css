@@ -39,18 +39,17 @@ button {
 }
 
 .join-form__nameplate {
-  text-align: center;
-  color: #d9b866;
-  font-weight: 700;
-  letter-spacing: 2px;
+  background: #1a1a1c;
+  border: 2px solid #6b5420;
+  border-radius: 6px;
+  padding: 4px;
   margin-bottom: 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
 }
-.join-form__nameplate small {
+.join-form__nameplate img {
   display: block;
-  color: #a48a4f;
-  letter-spacing: 3px;
-  font-size: 10px;
-  margin-top: 4px;
+  width: 100%;
+  border-radius: 3px;
 }
 
 .join-form label {

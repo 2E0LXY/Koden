@@ -29,8 +29,7 @@ export function JoinForm({ onJoin, defaultCallsign = "", defaultGrid = "" }: Joi
   return (
     <form className="join-form" onSubmit={submit}>
       <div className="join-form__nameplate">
-        <span>KODEN DX-9000</span>
-        <small>MULTIBAND TRANSCEIVER</small>
+        <img src="/koden-nameplate.jpg" alt="KODEN DX-9000 - Multiband Transceiver - Made in Japan" />
       </div>
       <label>
         Callsign
