@@ -329,13 +329,15 @@ export class AudioEngine {
   setMicGain(level: number): void {
     this.currentMicGain = level;
     if (!this.micGainNode) return;
-    this.micGainNode.gain.value = 0.2 + (level / 10) * 2.8;
+    // Calibrated so the dial's middle (5) sits at unity gain -- the browser's
+    // own autoGainControl already normalizes mic input close to full scale,
+    // so a middle-of-the-road default shouldn't itself add any overdrive.
+    this.micGainNode.gain.value = 0.1 + (level / 10) * 1.8;
   }
 
+  /** RF output power (watts) -- feeds the server's propagation/SWR model and the wattmeter only. It must never touch the transmitted audio's gain: a real rig's output power stage doesn't add distortion to its baseband audio, so txGainNode stays fixed at unity. */
   setTxPower(level: number): void {
     this.currentTxPower = level;
-    if (!this.txGainNode) return;
-    this.txGainNode.gain.value = 0.4 + (level / 10) * 0.9;
   }
 
   /** 0..10 monitor/sidetone volume; call whenever the level or the enabled toggle changes. */

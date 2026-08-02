@@ -537,6 +537,42 @@ button {
   gap: 6px;
 }
 
+.memory-bank {
+  margin-top: 8px;
+}
+.memory-bank__label {
+  color: #7a6a3f;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.memory-bank__grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+.memory-bank__key {
+  background: linear-gradient(#2c2c30, #1c1c1f);
+  border: 1px solid #111;
+  border-radius: 4px;
+  color: #665a3a;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 24px;
+}
+.memory-bank__key:hover {
+  background: linear-gradient(#38383c, #232326);
+}
+.memory-bank__key--filled {
+  color: #e8b84b;
+}
+.memory-bank__key--active {
+  border-color: #3bff6a;
+  box-shadow: 0 0 6px rgba(60, 255, 100, 0.4);
+}
+
 .panel__scan-filter-row {
   display: flex;
   gap: 14px;

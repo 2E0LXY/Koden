@@ -21,7 +21,10 @@ class CaptureProcessor extends AudioWorkletProcessor {
         if (this.index === FRAME_SAMPLES) {
           const int16 = new Int16Array(FRAME_SAMPLES);
           for (let j = 0; j < FRAME_SAMPLES; j++) {
-            const s = Math.max(-1, Math.min(1, this.buffer[j]));
+            // Soft-clip rather than hard-clamp: transparent well under 1.0,
+            // but an occasional loud peak or plosive saturates smoothly like
+            // a real transmitter's ALC instead of chopping the waveform flat.
+            const s = Math.tanh(this.buffer[j]);
             int16[j] = s < 0 ? s * 32768 : s * 32767;
           }
           this.port.postMessage(int16.buffer, [int16.buffer]);
