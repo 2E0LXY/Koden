@@ -326,6 +326,57 @@ button {
 .panel__status--connecting { color: #8a6c2c; }
 .panel__status--closed { color: #8a1010; }
 
+.freq-keypad {
+  width: 260px;
+  background: #0c0c0d;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 8px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.freq-keypad__label {
+  text-align: center;
+  color: #7a6a3f;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  margin-bottom: 6px;
+}
+.freq-keypad__grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: 1fr;
+  gap: 5px;
+}
+.freq-keypad__key {
+  background: linear-gradient(#3a3a3e, #232326);
+  border: 1px solid #111;
+  border-radius: 4px;
+  color: #e8b84b;
+  font-family: "Courier New", monospace;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 28px;
+}
+.freq-keypad__key:hover {
+  background: linear-gradient(#454549, #2a2a2d);
+}
+.freq-keypad__key:active {
+  background: #1a1a1c;
+}
+.freq-keypad__key--enter {
+  grid-column: 1 / -1;
+  color: #3bff6a;
+}
+.freq-keypad__key--enter.freq-keypad__key--active {
+  background: #0a5a1a;
+  border-color: #3bff6a;
+  box-shadow: 0 0 8px rgba(60, 255, 100, 0.5);
+}
+
 .panel__buttonrow {
   display: flex;
   gap: 8px;

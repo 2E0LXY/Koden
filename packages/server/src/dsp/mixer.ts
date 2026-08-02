@@ -32,6 +32,10 @@ import {
   BeaconToneOscillator,
   MorseBeacon,
 } from "./beacon.js";
+import { PARROT_FREQ_KHZ, PARROT_ID, ParrotEcho } from "./parrot.js";
+
+/** Fixed reference level for the parrot's played-back audio -- clear and strong, like the beacon. */
+const PARROT_SIGNAL_DB = -10;
 
 const AUDIBLE_THRESHOLD_DB = -38;
 const METER_EVERY_N_TICKS = 4;
@@ -60,14 +64,17 @@ export class MixerEngine {
   private beaconOscByStation = new Map<string, BeaconToneOscillator>();
   private tickCount = 0;
   private beacon = new MorseBeacon("KODEN BEACON", 10, 7);
+  private parrot: ParrotEcho;
 
   constructor(
     private stations: StationManager,
     private sampleRate: number,
     private send: (ws: WebSocket, message: ServerMessage) => void,
-  ) {}
+  ) {
+    this.parrot = new ParrotEcho(sampleRate, FRAME_SAMPLES);
+  }
 
-  onDisconnect(id: string): void {
+  onDisconnect(id: string, nowMs: number): void {
     this.propagation.forget(id);
     this.noiseByStation.delete(id);
     this.txBandwidthByStation.delete(id);
@@ -78,6 +85,7 @@ export class MixerEngine {
       if (key.startsWith(`${id}:`) || key.endsWith(`:${id}`)) this.ssbShifterByPair.delete(key);
     }
     this.beaconOscByStation.delete(id);
+    this.parrot.handleDisconnect(id, nowMs);
   }
 
   private getTxBandwidthFilter(tx: Station): TxBandwidthFilter {
@@ -153,6 +161,20 @@ export class MixerEngine {
     const beaconEnvelope = this.beacon.nextEnvelope(nowMs, this.sampleRate, FRAME_SAMPLES);
     const beaconGain = dbToLinear(Math.min(BEACON_SIGNAL_DB, 0));
 
+    // Anyone transmitting into the parrot's own passband this tick is a
+    // candidate to record; advancing/recording happens once per tick here
+    // (not per listener), same reasoning as the beacon's envelope above.
+    const parrotCandidates = transmitters
+      .filter((tx) => Math.abs(tx.txFreqKHz - PARROT_FREQ_KHZ) <= passbandKHz(tx.mode, tx.filterWidth) / 2)
+      .map((tx) => {
+        const frame = new Float32Array(FRAME_SAMPLES);
+        int16ToFloat32(tx.pendingFrame!, frame);
+        return { id: tx.id, frame };
+      });
+    this.parrot.tick(nowMs, parrotCandidates);
+    const parrotFrame = this.parrot.nextFrame();
+    const parrotGain = dbToLinear(Math.min(PARROT_SIGNAL_DB, 0));
+
     for (const rx of all) {
       // Even tuned into a gap between amateur allocations, a real receiver
       // still hears *something* rather than dead silence -- fall back to
@@ -186,6 +208,15 @@ export class MixerEngine {
         const beaconToneHz = Math.abs((rx.freqKHz - BEACON_CARRIER_KHZ) * 1000);
         const beaconFrame = this.getBeaconOscillator(rx).renderTone(beaconEnvelope, this.sampleRate, beaconToneHz);
         for (let i = 0; i < output.length; i++) output[i] += beaconFrame[i] * beaconGain;
+      }
+
+      // The parrot echo test: audible (like a real repeater's parrot
+      // function) to anyone tuned to it while a recording is replaying,
+      // not just whoever recorded it.
+      if (parrotFrame && Math.abs(PARROT_FREQ_KHZ - rx.freqKHz) <= passbandKHz(rx.mode, rx.filterWidth) / 2) {
+        audibleIds.push(PARROT_ID);
+        peakSignalDb = Math.max(peakSignalDb, PARROT_SIGNAL_DB);
+        for (let i = 0; i < output.length; i++) output[i] += parrotFrame[i] * parrotGain;
       }
 
       // FM has a real "capture effect": the discriminator locks onto

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ANTENNAS, BANDS, antennaById, type AntennaId, type Band, type FilterWidth, type Mode, type StationInfo } from "@koden/shared";
 import type { AgcMode, ReceiveParams } from "../audio/engine.js";
 import type { TuneStep } from "../App.js";
@@ -13,6 +14,7 @@ import { PanelButton } from "./PanelButton.js";
 import { RotatorCompass } from "./RotatorCompass.js";
 import { AntennaMap } from "./AntennaMap.js";
 import { SetupPanel } from "./SetupPanel.js";
+import { FreqKeypad } from "./FreqKeypad.js";
 
 interface VfoDisplay {
   freqKHz: number;
@@ -270,6 +272,26 @@ export function RadioPanel(props: RadioPanelProps) {
     events,
   } = props;
 
+  const [keypadBuffer, setKeypadBuffer] = useState("");
+  const keypadActive = keypadBuffer.length > 0;
+
+  const onKeypadDigit = (d: string) => {
+    setKeypadBuffer((prev) => (prev.length >= 9 ? prev : prev + d));
+  };
+  const onKeypadDecimal = () => {
+    setKeypadBuffer((prev) => (prev.includes(".") ? prev : prev + "."));
+  };
+  const onKeypadBackspace = () => {
+    setKeypadBuffer((prev) => prev.slice(0, -1));
+  };
+  const onKeypadEnter = () => {
+    const mhz = parseFloat(keypadBuffer);
+    if (Number.isFinite(mhz) && mhz > 0) {
+      onTuneKnob(mhz * 1000);
+    }
+    setKeypadBuffer("");
+  };
+
   const activeVfoState = activeVfo === "A" ? vfoA : vfoB;
   const otherVfo = activeVfo === "A" ? vfoB : vfoA;
   const audibleSet = new Set(audibleStationIds);
@@ -332,7 +354,9 @@ export function RadioPanel(props: RadioPanelProps) {
               <span className="panel__mode-tag">{activeVfoState.mode}</span>
               {vfoLocked && <span className="panel__mode-tag">LOCK</span>}
             </div>
-            <div className="panel__freq-main">{formatFreq(activeVfoState.freqKHz)}</div>
+            <div className="panel__freq-main">
+              {keypadActive ? `${keypadBuffer}_` : formatFreq(activeVfoState.freqKHz)}
+            </div>
             <div className="panel__display-row panel__display-row--secondary">
               <span>
                 VFO-{activeVfo === "A" ? "B" : "A"} {otherVfo.mode}
@@ -371,6 +395,13 @@ export function RadioPanel(props: RadioPanelProps) {
             <Knob label="RF GAIN" value={rx.rfGain} min={0} max={10} onChange={(v) => onUpdateRx({ rfGain: v })} />
             <Knob label="SQL" value={rx.squelch} min={0} max={10} onChange={(v) => onUpdateRx({ squelch: v })} />
           </div>
+          <FreqKeypad
+            active={keypadActive}
+            onDigit={onKeypadDigit}
+            onDecimal={onKeypadDecimal}
+            onBackspace={onKeypadBackspace}
+            onEnter={onKeypadEnter}
+          />
         </div>
       </div>
 
