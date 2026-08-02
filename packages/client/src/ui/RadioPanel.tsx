@@ -385,6 +385,7 @@ export function RadioPanel(props: RadioPanelProps) {
               getLiveLevel={getLiveLevel}
               active={transmitting}
               centerFreqKHz={activeVfoState.freqKHz}
+              bandRangeKHz={band?.rangeKHz}
               stations={roster
                 .filter((s) => s.id !== ownId)
                 .map((s) => ({ id: s.id, freqKHz: s.freqKHz, transmitting: s.transmitting, audible: audibleSet.has(s.id) }))}
