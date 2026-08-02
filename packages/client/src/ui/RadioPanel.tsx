@@ -146,6 +146,8 @@ interface RadioPanelProps {
   roster: StationInfo[];
   ownId: string | null;
   events: string[];
+  /** Live receive audio level, read directly off actual playback -- see AudioEngine.getRxLevel(). */
+  getLiveLevel?: () => { rms: number; peak: number };
 }
 
 const MODE_BUTTONS: { label: string; mode: Mode }[] = [
@@ -262,6 +264,7 @@ export function RadioPanel(props: RadioPanelProps) {
     audibleStationIds,
     noiseFloorDb,
     txModLevel,
+    getLiveLevel,
     roster,
     ownId,
     events,
@@ -315,7 +318,7 @@ export function RadioPanel(props: RadioPanelProps) {
             >
               {CONNECTION_LABELS[connectionStatus] ?? connectionStatus.toUpperCase()}
             </span>
-            <SMeter signalDb={signalDb} />
+            <SMeter signalDb={signalDb} getLiveLevel={getLiveLevel} />
             <SwrBar swr={swr} tuning={tunerActive} />
             <CompMeter enabled={compEnabled} level={procLevel} />
             <WattMeter watts={txPower * 10 * txEnvelope} transmitting={transmitting} />
@@ -348,6 +351,7 @@ export function RadioPanel(props: RadioPanelProps) {
             <Waterfall
               signalDb={signalDb}
               noiseFloorDb={noiseFloorDb}
+              getLiveLevel={getLiveLevel}
               active={transmitting}
               centerFreqKHz={activeVfoState.freqKHz}
               stations={roster

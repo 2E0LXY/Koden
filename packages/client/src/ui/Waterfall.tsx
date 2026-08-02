@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 interface WaterfallStation {
   id: string;
@@ -17,6 +17,13 @@ interface WaterfallProps {
   stations?: WaterfallStation[];
   /** Click/tap anywhere on the display to tune directly to that frequency, like a real panadapter. */
   onTuneTo?: (freqKHz: number) => void;
+  /**
+   * Live receive audio level (0..1 RMS/peak), read directly off actual
+   * playback rather than the server's slower periodic meter reports -- lets
+   * real interference (crackle, buzz, whistle) show up on the display as it
+   * happens instead of only a steady, averaged glow.
+   */
+  getLiveLevel?: () => { rms: number; peak: number };
 }
 
 const WIDTH = 320;
@@ -24,8 +31,6 @@ const HEIGHT = 120;
 const SCOPE_HEIGHT = 26;
 const FALL_TOP = SCOPE_HEIGHT + 2;
 const FALL_HEIGHT = HEIGHT - FALL_TOP;
-/** Recenter the fixed window once the tuned frequency drifts this far (as a fraction of the span) from its middle. */
-const RECENTER_THRESHOLD = 0.4;
 
 /**
  * A stylized panadapter/waterfall combo styled after a typical HF
@@ -33,16 +38,16 @@ const RECENTER_THRESHOLD = 0.4;
  * scrolling waterfall below, and a red tuning line. There's no real per-bin
  * FFT to draw (the server doesn't ship one) -- every bump on screen instead
  * comes from real data: the actual noise floor level, the real signal
- * you're receiving, and every other roster station plotted at its real
- * frequency offset, sized by whether the mixer actually reports it as
- * audible right now. The only randomness is a faint per-pixel dither for
- * texture, not fabricated activity.
+ * you're receiving (including live playback level, so real interference
+ * flickers show up as it's actually heard), and every other roster station
+ * plotted at its real frequency offset, sized by whether the mixer actually
+ * reports it as audible right now. The only randomness is a faint per-pixel
+ * dither for texture, not fabricated activity.
  *
- * Like a real "FIX" panadapter mode, the frequency window only recenters
- * once your tuned frequency drifts near its edge -- small tuning moves
- * (turning the VFO knob, clicking elsewhere on the display) instead slide
- * the red tuning line and your own signal bump visibly across the screen,
- * rather than always snapping back to dead centre.
+ * Like a real "CENTER" panadapter mode, the tuning line always sits dead
+ * centre and the frequency window scrolls continuously to track it, so
+ * stations and activity slide smoothly across the display as you tune
+ * instead of the display staying fixed underneath a moving tuning line.
  */
 export function Waterfall({
   signalDb,
@@ -52,6 +57,7 @@ export function Waterfall({
   spanKHz = 6,
   stations = [],
   onTuneTo,
+  getLiveLevel,
 }: WaterfallProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const signalRef = useRef(signalDb);
@@ -59,21 +65,21 @@ export function Waterfall({
   const activeRef = useRef(active);
   const stationsRef = useRef(stations);
   const tunedRef = useRef(centerFreqKHz);
+  const getLiveLevelRef = useRef(getLiveLevel);
   signalRef.current = signalDb;
   noiseFloorRef.current = noiseFloorDb;
   activeRef.current = active;
   stationsRef.current = stations;
   tunedRef.current = centerFreqKHz;
+  getLiveLevelRef.current = getLiveLevel;
 
-  const [windowCenterKHz, setWindowCenterKHz] = useState(centerFreqKHz);
+  // The tuning line always sits at centre; the frequency window tracks the
+  // tuned frequency continuously (a "CENTER" panadapter mode), so activity
+  // slides smoothly across the display as you tune rather than the window
+  // only jumping once you drift near its edge.
+  const windowCenterKHz = centerFreqKHz;
   const windowCenterRef = useRef(windowCenterKHz);
   windowCenterRef.current = windowCenterKHz;
-
-  useEffect(() => {
-    setWindowCenterKHz((prev) =>
-      Math.abs(centerFreqKHz - prev) > spanKHz * RECENTER_THRESHOLD ? centerFreqKHz : prev,
-    );
-  }, [centerFreqKHz, spanKHz]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -83,7 +89,7 @@ export function Waterfall({
 
     let raf = 0;
 
-    const intensityAt = (x: number, level: number, ownX: number, floorLevel: number): number => {
+    const intensityAt = (x: number, level: number, ownX: number, floorLevel: number, liveActivity: number): number => {
       // Real ambient noise floor, not a fabricated wander -- plus a faint
       // per-pixel dither so it reads as static texture rather than a flat
       // band.
@@ -106,7 +112,13 @@ export function Waterfall({
 
       const ownD = x - ownX;
       const ownSpread = 6 + level * 20;
-      intensity += Math.exp(-(ownD * ownD) / (2 * ownSpread * ownSpread)) * level * (activeRef.current ? 1.2 : 1);
+      const ownFalloff = Math.exp(-(ownD * ownD) / (2 * ownSpread * ownSpread));
+      intensity += ownFalloff * level * (activeRef.current ? 1.2 : 1);
+      // Real-time playback activity -- actual interference (crackle, buzz,
+      // whistle) or signal as it's actually heard right now, not just the
+      // server's slower averaged meter reading -- flashes at the tuning
+      // line, the same spot the audio is actually coming from.
+      intensity += ownFalloff * liveActivity;
 
       return Math.min(1, intensity);
     };
@@ -121,6 +133,11 @@ export function Waterfall({
       const floorLevel = Math.max(0, Math.min(1, (noiseFloorRef.current + 95) / 110));
       const ownOffsetKHz = tunedRef.current - windowCenterRef.current;
       const ownX = WIDTH / 2 + (ownOffsetKHz / spanKHz) * WIDTH;
+      const live = getLiveLevelRef.current?.() ?? { rms: 0, peak: 0 };
+      // Peak catches brief transients (a single crackle pop) that an RMS
+      // average would smooth away; RMS reflects sustained buzz/whistle
+      // presence. Blend both so either kind of activity shows up.
+      const liveActivity = Math.min(1, Math.max(live.peak * 0.85, live.rms * 1.4));
 
       // Scroll the waterfall region down by one row, then paint a fresh one.
       const image = ctx.getImageData(0, FALL_TOP, WIDTH, FALL_HEIGHT - 1);
@@ -128,7 +145,7 @@ export function Waterfall({
 
       const row = ctx.createImageData(WIDTH, 1);
       for (let x = 0; x < WIDTH; x++) {
-        const intensity = intensityAt(x, level, ownX, floorLevel);
+        const intensity = intensityAt(x, level, ownX, floorLevel, liveActivity);
         const idx = x * 4;
         // Deep blue -> purple -> pink/white as intensity rises.
         row.data[idx] = 20 + intensity * 210;
@@ -145,7 +162,7 @@ export function Waterfall({
       ctx.beginPath();
       ctx.moveTo(0, SCOPE_HEIGHT);
       for (let x = 0; x < WIDTH; x++) {
-        const intensity = intensityAt(x, level, ownX, floorLevel);
+        const intensity = intensityAt(x, level, ownX, floorLevel, liveActivity);
         ctx.lineTo(x, SCOPE_HEIGHT - intensity * (SCOPE_HEIGHT - 2));
       }
       ctx.lineTo(WIDTH, SCOPE_HEIGHT);
@@ -166,7 +183,6 @@ export function Waterfall({
   }, [spanKHz]);
 
   const half = spanKHz / 2;
-  const tuneLinePercent = Math.max(2, Math.min(98, 50 + ((centerFreqKHz - windowCenterKHz) / spanKHz) * 100));
 
   const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!onTuneTo) return;
@@ -186,7 +202,7 @@ export function Waterfall({
         onClick={onClick}
         className={onTuneTo ? "waterfall__canvas--clickable" : undefined}
       />
-      <div className="waterfall__tuneline" style={{ left: `${tuneLinePercent}%` }} />
+      <div className="waterfall__tuneline" style={{ left: "50%" }} />
       <div className="waterfall__scale">
         <span>{(windowCenterKHz - half).toFixed(1)}</span>
         <span>{centerFreqKHz.toFixed(1)} kHz</span>
