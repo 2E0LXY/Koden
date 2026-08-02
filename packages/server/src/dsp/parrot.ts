@@ -1,3 +1,6 @@
+import type { Mode } from "@koden/shared";
+import { TxBandwidthFilter } from "./audioEffects.js";
+
 /**
  * A "parrot" test frequency: key up and talk, un-key, and after a short
  * pause it plays back exactly what you sent -- the classic ham radio way
@@ -27,16 +30,29 @@ export class ParrotEcho {
   private playbackIndex = 0;
   private waitUntilMs = 0;
   private readonly maxFrames: number;
+  private readonly sampleRate: number;
+  /**
+   * A real station's transmitted audio is band-limited to its mode's actual
+   * occupied bandwidth (narrow ~300-2700Hz for SSB, wider for FM) -- see
+   * TxBandwidthFilter's use for every other station's audio in mixer.ts.
+   * Recording raw, unfiltered mic PCM here would make the parrot always
+   * sound identically "wideband" regardless of which mode you recorded in,
+   * so the same per-mode filter is applied here too, continuously across
+   * the whole recording (one instance per session, not reset per frame).
+   */
+  private modeFilter: TxBandwidthFilter | null = null;
 
   constructor(sampleRate: number, frameSamples: number) {
+    this.sampleRate = sampleRate;
     this.maxFrames = Math.ceil((MAX_RECORD_SECONDS * sampleRate) / frameSamples);
   }
 
   /**
    * Call once per tick (not per listener) with whichever stations are
    * currently keyed (PTT held) into the parrot's passband this tick, plus
-   * whichever of those actually had a fresh audio frame arrive this tick.
-   * These are deliberately kept separate: a station's mic frame can
+   * whichever of those actually had a fresh audio frame arrive this tick,
+   * plus the mode each keyed station is using. Keyed status and frame
+   * availability are deliberately kept separate: a station's mic frame can
    * legitimately miss a single 20ms tick window (network/scheduling
    * jitter) without its PTT actually having been released, and treating a
    * missed frame as "released" would truncate the recording essentially
@@ -48,14 +64,20 @@ export class ParrotEcho {
    * simply holds the gap if this particular tick had no frame yet), and
    * starts the replay countdown once its PTT actually releases.
    */
-  tick(nowMs: number, keyedIntoParrot: Set<string>, framesById: ReadonlyMap<string, Float32Array>): void {
+  tick(
+    nowMs: number,
+    keyedIntoParrot: Set<string>,
+    framesById: ReadonlyMap<string, Float32Array>,
+    modesById: ReadonlyMap<string, Mode>,
+  ): void {
     if (this.state === "idle") {
       const [firstId] = keyedIntoParrot;
       if (firstId !== undefined) {
         this.state = "recording";
         this.recordingStationId = firstId;
+        this.modeFilter = new TxBandwidthFilter(this.sampleRate, modesById.get(firstId) ?? "USB");
         const frame = framesById.get(firstId);
-        this.frames = frame ? [frame.slice()] : [];
+        this.frames = frame ? [this.shapeFrame(frame)] : [];
       }
       return;
     }
@@ -63,7 +85,7 @@ export class ParrotEcho {
     if (this.state === "recording") {
       if (keyedIntoParrot.has(this.recordingStationId!)) {
         const frame = framesById.get(this.recordingStationId!);
-        if (frame && this.frames.length < this.maxFrames) this.frames.push(frame.slice());
+        if (frame && this.frames.length < this.maxFrames) this.frames.push(this.shapeFrame(frame));
         return;
       }
       // The recording station released PTT (or dropped) -- queue the replay.
@@ -76,6 +98,12 @@ export class ParrotEcho {
       this.state = "playing";
       this.playbackIndex = 0;
     }
+  }
+
+  private shapeFrame(frame: Float32Array): Float32Array {
+    const shaped = frame.slice();
+    this.modeFilter!.processInPlace(shaped);
+    return shaped;
   }
 
   /** If a disconnect interrupts an in-progress recording, queue the replay of whatever was captured rather than leaving the slot stuck. */
