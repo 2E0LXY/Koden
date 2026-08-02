@@ -339,59 +339,63 @@ export function RadioPanel(props: RadioPanelProps) {
           </button>
         </div>
 
-        <div className="panel__dual-display">
-          <div className="panel__scope-display">
-            <span
-              className={`panel__status panel__status--${connectionStatus}`}
-              title="Connection to the Koden server -- not a band condition"
-            >
-              {CONNECTION_LABELS[connectionStatus] ?? connectionStatus.toUpperCase()}
-            </span>
-            <SMeter signalDb={signalDb} getLiveLevel={getLiveLevel} />
-            <SwrBar swr={swr} tuning={tunerActive} />
-            <CompMeter enabled={compEnabled} level={procLevel} />
-            <WattMeter watts={txPower * 10 * txEnvelope} transmitting={transmitting} />
+        <div className="panel__lcd-col">
+          <div className="panel__dual-display">
+            <div className="panel__scope-display">
+              <span
+                className={`panel__status panel__status--${connectionStatus}`}
+                title="Connection to the Koden server -- not a band condition"
+              >
+                {CONNECTION_LABELS[connectionStatus] ?? connectionStatus.toUpperCase()}
+              </span>
+              <SMeter signalDb={signalDb} getLiveLevel={getLiveLevel} />
+              <SwrBar swr={swr} tuning={tunerActive} />
+              <CompMeter enabled={compEnabled} level={procLevel} />
+              <WattMeter watts={txPower * 10 * txEnvelope} transmitting={transmitting} />
+            </div>
+
+            <div className={`panel__display ${mScope ? "panel__display--big-scope" : ""}`}>
+              <div className="panel__display-row">
+                <span className={`panel__indicator panel__indicator--tx ${transmitting ? "panel__indicator--on" : ""}`}>TX</span>
+                <span className={`panel__indicator panel__indicator--rx ${!transmitting ? "panel__indicator--on" : ""}`}>RX</span>
+                <span className="panel__vfo-tag">VFO-{activeVfo}</span>
+                <span className="panel__mode-tag">{activeVfoState.mode}</span>
+                {vfoLocked && <span className="panel__mode-tag">LOCK</span>}
+              </div>
+              <div className="panel__freq-main">
+                {keypadActive ? `${keypadBuffer}_` : formatFreq(activeVfoState.freqKHz)}
+              </div>
+              <div className="panel__display-row panel__display-row--secondary">
+                <span>
+                  VFO-{activeVfo === "A" ? "B" : "A"} {otherVfo.mode}
+                </span>
+                <span>{formatFreq(otherVfo.freqKHz)}</span>
+                <span>RIT {ritEnabled ? (offsetHz >= 0 ? "+" : "") + (offsetHz / 1000).toFixed(2) : "OFF"}</span>
+                <span>XIT {xitEnabled ? (offsetHz >= 0 ? "+" : "") + (offsetHz / 1000).toFixed(2) : "OFF"}</span>
+              </div>
+              <div className="panel__display-row panel__display-row--tertiary">
+                <span>BAND {band?.id.toUpperCase() ?? "--"}</span>
+                <span>R.FLT {filterLabel}</span>
+                <span>M.CH {memIndex}</span>
+                <span>{split ? "SPLIT" : ""}</span>
+                <span>{antennaLabel}</span>
+              </div>
+              <Waterfall
+                signalDb={signalDb}
+                noiseFloorDb={noiseFloorDb}
+                getLiveLevel={getLiveLevel}
+                active={transmitting}
+                centerFreqKHz={activeVfoState.freqKHz}
+                bandRangeKHz={band?.rangeKHz}
+                stations={roster
+                  .filter((s) => s.id !== ownId)
+                  .map((s) => ({ id: s.id, freqKHz: s.freqKHz, transmitting: s.transmitting, audible: audibleSet.has(s.id) }))}
+                onTuneTo={onTuneKnob}
+              />
+            </div>
           </div>
 
-          <div className={`panel__display ${mScope ? "panel__display--big-scope" : ""}`}>
-            <div className="panel__display-row">
-              <span className={`panel__indicator panel__indicator--tx ${transmitting ? "panel__indicator--on" : ""}`}>TX</span>
-              <span className={`panel__indicator panel__indicator--rx ${!transmitting ? "panel__indicator--on" : ""}`}>RX</span>
-              <span className="panel__vfo-tag">VFO-{activeVfo}</span>
-              <span className="panel__mode-tag">{activeVfoState.mode}</span>
-              {vfoLocked && <span className="panel__mode-tag">LOCK</span>}
-            </div>
-            <div className="panel__freq-main">
-              {keypadActive ? `${keypadBuffer}_` : formatFreq(activeVfoState.freqKHz)}
-            </div>
-            <div className="panel__display-row panel__display-row--secondary">
-              <span>
-                VFO-{activeVfo === "A" ? "B" : "A"} {otherVfo.mode}
-              </span>
-              <span>{formatFreq(otherVfo.freqKHz)}</span>
-              <span>RIT {ritEnabled ? (offsetHz >= 0 ? "+" : "") + (offsetHz / 1000).toFixed(2) : "OFF"}</span>
-              <span>XIT {xitEnabled ? (offsetHz >= 0 ? "+" : "") + (offsetHz / 1000).toFixed(2) : "OFF"}</span>
-            </div>
-            <div className="panel__display-row panel__display-row--tertiary">
-              <span>BAND {band?.id.toUpperCase() ?? "--"}</span>
-              <span>R.FLT {filterLabel}</span>
-              <span>M.CH {memIndex}</span>
-              <span>{split ? "SPLIT" : ""}</span>
-              <span>{antennaLabel}</span>
-            </div>
-            <Waterfall
-              signalDb={signalDb}
-              noiseFloorDb={noiseFloorDb}
-              getLiveLevel={getLiveLevel}
-              active={transmitting}
-              centerFreqKHz={activeVfoState.freqKHz}
-              bandRangeKHz={band?.rangeKHz}
-              stations={roster
-                .filter((s) => s.id !== ownId)
-                .map((s) => ({ id: s.id, freqKHz: s.freqKHz, transmitting: s.transmitting, audible: audibleSet.has(s.id) }))}
-              onTuneTo={onTuneKnob}
-            />
-          </div>
+          <MemoryBank memory={memory} activeIndex={memIndex} onProgram={onMemoryProgram} onRecall={onMemoryRecall} />
         </div>
 
         <div className="panel__top-right-col">
@@ -626,8 +630,6 @@ export function RadioPanel(props: RadioPanelProps) {
               <PanelButton small label="VFO/M" active={vfoMMode === "M"} onClick={onToggleVfoM} />
             </div>
           </div>
-
-          <MemoryBank memory={memory} activeIndex={memIndex} onProgram={onMemoryProgram} onRecall={onMemoryRecall} />
 
           <div className="knob-row">
             <Knob
