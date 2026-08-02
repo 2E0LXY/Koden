@@ -137,17 +137,22 @@ export class AtmosphericCrackle {
   private samplesUntilNext = 0;
   private decayRemaining = 0;
   private decayGain = 0;
+  private intensityAtTrigger = 1;
+  // A slow LFO so activity waxes and wanes over minutes -- distant storm
+  // cells and propagation conditions drift, rather than the same band
+  // sounding statistically identical for as long as you stay tuned to it.
+  private activityPhase = Math.random() * Math.PI * 2;
 
   constructor(
     private sampleRate: number,
     private cracklesPerSecond: number,
     private intensity: number,
   ) {
-    this.scheduleNext();
+    this.scheduleNext(1);
   }
 
-  private scheduleNext(): void {
-    const meanGapSamples = this.sampleRate / Math.max(this.cracklesPerSecond, 0.001);
+  private scheduleNext(activity: number): void {
+    const meanGapSamples = this.sampleRate / Math.max(this.cracklesPerSecond * activity, 0.001);
     // Exponential inter-arrival time for a Poisson process.
     this.samplesUntilNext = Math.round(-Math.log(1 - Math.random()) * meanGapSamples);
   }
@@ -157,19 +162,25 @@ export class AtmosphericCrackle {
   }
 
   fillAdd(out: Float32Array): void {
+    const activityStep = (2 * Math.PI * 0.006) / this.sampleRate; // ~3 min period
     for (let i = 0; i < out.length; i++) {
+      this.activityPhase += activityStep;
+      if (this.activityPhase > Math.PI * 2) this.activityPhase -= Math.PI * 2;
+      const activity = 0.35 + 0.9 * (0.5 + 0.5 * Math.sin(this.activityPhase));
+
       if (this.decayRemaining > 0) {
         // A real static crash has an audible decaying "tail," not just an
         // instantaneous tick -- 0.75/sample dies out in well under a
         // millisecond, too brief to register as a discrete "pop" at all.
-        out[i] += this.decayGain * this.intensity;
+        out[i] += this.decayGain * this.intensityAtTrigger;
         this.decayGain *= 0.96;
         this.decayRemaining--;
       }
       if (this.samplesUntilNext <= 0) {
         this.decayGain = 0.6 + Math.random() * 0.4;
+        this.intensityAtTrigger = this.intensity * (0.6 + activity * 0.6);
         this.decayRemaining = Math.round(this.sampleRate * (0.008 + Math.random() * 0.015));
-        this.scheduleNext();
+        this.scheduleNext(activity);
       } else {
         this.samplesUntilNext--;
       }
@@ -253,6 +264,10 @@ export class IgnitionBuzz {
   private periodSamples: number;
   private burstRemaining = 0;
   private nextCheckSamples: number;
+  // Slow activity LFO (different period/phase than AtmosphericCrackle's, so
+  // the various interference sources don't all wax and wane in lockstep) --
+  // some stretches of time have more nearby electrical noise than others.
+  private activityPhase = Math.random() * Math.PI * 2;
 
   constructor(
     private sampleRate: number,
@@ -264,12 +279,19 @@ export class IgnitionBuzz {
   }
 
   fillAdd(out: Float32Array): void {
+    const activityStep = (2 * Math.PI * 0.0045) / this.sampleRate; // ~3.7 min period
     for (let i = 0; i < out.length; i++) {
+      this.activityPhase += activityStep;
+      if (this.activityPhase > Math.PI * 2) this.activityPhase -= Math.PI * 2;
+      const activity = 0.3 + 1.0 * (0.5 + 0.5 * Math.sin(this.activityPhase));
+
       if (this.burstRemaining > 0) {
         this.burstRemaining--;
       } else if (this.nextCheckSamples <= 0) {
         this.nextCheckSamples = Math.round(this.sampleRate * (2 + Math.random() * 6));
-        if (Math.random() < 0.4) this.burstRemaining = Math.round(this.sampleRate * (0.3 + Math.random() * 1.2));
+        if (Math.random() < 0.4 * activity) {
+          this.burstRemaining = Math.round(this.sampleRate * (0.3 + Math.random() * 1.2));
+        }
       } else {
         this.nextCheckSamples--;
       }
@@ -282,7 +304,7 @@ export class IgnitionBuzz {
         const clickSamples = 40;
         if (this.phaseSamples < clickSamples) {
           const t = this.phaseSamples / clickSamples;
-          out[i] += (1 - t) * this.intensity * (Math.random() * 2 - 1);
+          out[i] += (1 - t) * this.intensity * activity * (Math.random() * 2 - 1);
         }
       }
     }
@@ -302,23 +324,48 @@ export class IgnitionBuzz {
  */
 export class SmpsHash {
   private phases: number[];
-  private steps: number[];
+  private readonly harmonics = [1, 3, 5, 7, 9];
   private envelope = 0.75;
+  private fundamentalHz: number;
+  private targetHz: number;
+  private readonly minHz = 60;
+  private readonly maxHz = 180;
+  // A slow LFO on overall activity, like a switcher's load (and how loud its
+  // hash reads) drifting over time rather than sitting at one fixed level
+  // for as long as you're tuned to the band.
+  private activityPhase = Math.random() * Math.PI * 2;
 
-  constructor(sampleRate: number, private intensity: number) {
-    const fundamentalHz = 70 + Math.random() * 70;
-    const harmonics = [1, 3, 5, 7, 9];
-    this.phases = harmonics.map(() => Math.random() * Math.PI * 2);
-    this.steps = harmonics.map((h) => (2 * Math.PI * fundamentalHz * h) / sampleRate);
+  constructor(private sampleRate: number, private intensity: number) {
+    this.fundamentalHz = this.minHz + Math.random() * (this.maxHz - this.minHz);
+    this.targetHz = this.fundamentalHz;
+    this.phases = this.harmonics.map(() => Math.random() * Math.PI * 2);
   }
 
   fillAdd(out: Float32Array): void {
+    const driftHzPerSec = 8;
+    const maxStepPerSample = driftHzPerSec / this.sampleRate;
+    const activityStep = (2 * Math.PI * 0.008) / this.sampleRate; // ~2 min period
+
     for (let i = 0; i < out.length; i++) {
       this.envelope = Math.max(0.5, Math.min(1, this.envelope + (Math.random() - 0.5) * 0.08));
+
+      // Wander the fundamental gently, occasionally re-picking a target
+      // within range -- a real switcher's frequency isn't perfectly fixed.
+      if (Math.random() < 0.0002) {
+        this.targetHz = this.minHz + Math.random() * (this.maxHz - this.minHz);
+      }
+      const delta = this.targetHz - this.fundamentalHz;
+      this.fundamentalHz += Math.sign(delta) * Math.min(Math.abs(delta), maxStepPerSample);
+
+      this.activityPhase += activityStep;
+      if (this.activityPhase > Math.PI * 2) this.activityPhase -= Math.PI * 2;
+      const activity = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(this.activityPhase));
+
       let sum = 0;
       for (let h = 0; h < this.phases.length; h++) {
-        sum += Math.sin(this.phases[h]) / (h + 1);
-        this.phases[h] += this.steps[h];
+        const harmonic = this.harmonics[h];
+        sum += Math.sin(this.phases[h]) / (harmonic + 1);
+        this.phases[h] += (2 * Math.PI * this.fundamentalHz * harmonic) / this.sampleRate;
         if (this.phases[h] > Math.PI * 2) this.phases[h] -= Math.PI * 2;
       }
       // A fixed, modest drive into the soft-clip keeps the waveform only
@@ -329,7 +376,7 @@ export class SmpsHash {
       // characterless extra noise instead of a recognizable buzz).
       // `intensity` instead scales the *output* directly, so it can still be
       // pushed as loud as needed without touching the waveshape.
-      out[i] += Math.tanh(sum * this.envelope * 1.3) * this.intensity;
+      out[i] += Math.tanh(sum * this.envelope * 1.3) * this.intensity * activity;
     }
   }
 }
@@ -412,6 +459,7 @@ export class BandNoiseGenerator {
   private birdies: Birdie[];
   private heterodyne: WanderingTone | null = null;
   private whistle: WanderingTone | null = null;
+  private whistlePresencePhase = Math.random() * Math.PI * 2;
   private ignition: IgnitionBuzz;
   private smpsHash: SmpsHash;
   private woodpecker: OthrWoodpecker | null = null;
@@ -574,7 +622,21 @@ export class BandNoiseGenerator {
     if (this.woodpecker) this.woodpecker.fillAdd(out);
     for (const b of this.birdies) b.fillAdd(out);
     if (this.heterodyne) this.heterodyne.fillAdd(out);
-    if (this.whistle) this.whistle.fillAdd(out);
+    if (this.whistle) {
+      // A real heterodyne whistle comes and goes as the nearby station's
+      // signal fades in and out of range, rather than sitting there at a
+      // fixed presence for as long as you're tuned to the band -- gate it
+      // with a slow envelope that includes genuine near-silent stretches.
+      const whistleStep = (2 * Math.PI * 0.004) / this.sampleRate; // ~4 min period
+      const scratch = new Float32Array(nSamples);
+      this.whistle.fillAdd(scratch);
+      for (let i = 0; i < nSamples; i++) {
+        this.whistlePresencePhase += whistleStep;
+        if (this.whistlePresencePhase > Math.PI * 2) this.whistlePresencePhase -= Math.PI * 2;
+        const presence = Math.pow(Math.max(0, Math.sin(this.whistlePresencePhase)), 0.6);
+        out[i] += scratch[i] * presence;
+      }
+    }
 
     // The mode filter shapes *everything* reaching the ear (atmospheric
     // noise, crackle, birdies alike), not just the raw pink noise -- and the
