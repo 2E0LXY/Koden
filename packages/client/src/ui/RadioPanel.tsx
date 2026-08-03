@@ -12,7 +12,6 @@ import { VfoDial } from "./VfoDial.js";
 import { Knob } from "./Knob.js";
 import { PanelButton } from "./PanelButton.js";
 import { RotatorCompass } from "./RotatorCompass.js";
-import { AntennaMap } from "./AntennaMap.js";
 import { SetupPanel } from "./SetupPanel.js";
 import { FreqKeypad } from "./FreqKeypad.js";
 import { MemoryBank } from "./MemoryBank.js";
@@ -156,8 +155,9 @@ interface RadioPanelProps {
   onChangeVoxGainKnob: (v: number) => void;
   micGain: number;
   onChangeMicGain: (v: number) => void;
+  /** RF output power, watts (0.5-200W). */
   txPower: number;
-  onChangeTxPower: (v: number) => void;
+  onChangeTxPower: (watts: number) => void;
   keySpeed: number;
   onChangeKeySpeed: (v: number) => void;
 
@@ -170,7 +170,6 @@ interface RadioPanelProps {
   txModLevel: number;
   roster: StationInfo[];
   ownId: string | null;
-  events: string[];
   /** Live receive audio level, read directly off actual playback -- see AudioEngine.getRxLevel(). */
   getLiveLevel?: () => { rms: number; peak: number };
 }
@@ -311,7 +310,6 @@ export function RadioPanel(props: RadioPanelProps) {
     getLiveLevel,
     roster,
     ownId,
-    events,
   } = props;
 
   const [keypadBuffer, setKeypadBuffer] = useState("");
@@ -384,10 +382,10 @@ export function RadioPanel(props: RadioPanelProps) {
               >
                 {CONNECTION_LABELS[connectionStatus] ?? connectionStatus.toUpperCase()}
               </span>
-              <SMeter signalDb={signalDb} getLiveLevel={getLiveLevel} />
+              <SMeter signalDb={signalDb} noiseFloorDb={noiseFloorDb} getLiveLevel={getLiveLevel} />
               <SwrBar swr={swr} tuning={tunerActive} />
               <CompMeter enabled={compEnabled} level={procLevel} />
-              <WattMeter watts={txPower * 10 * txEnvelope} transmitting={transmitting} />
+              <WattMeter watts={txPower * txEnvelope} transmitting={transmitting} />
             </div>
 
             <div className={`panel__display ${mScope ? "panel__display--big-scope" : ""}`}>
@@ -529,17 +527,21 @@ export function RadioPanel(props: RadioPanelProps) {
         <div className="panel__knob-col">
           <div className="knob-row">
             <Knob label="MIC GAIN" value={micGain} min={0} max={10} onChange={onChangeMicGain} />
-            <Knob label="RF POWER" value={txPower} min={0} max={10} onChange={onChangeTxPower} />
+            <Knob
+              label="RF POWER"
+              value={Math.log10(txPower)}
+              min={Math.log10(MIN_TX_WATTS)}
+              max={Math.log10(MAX_TX_WATTS)}
+              format={() => formatWatts(txPower)}
+              onChange={(logWatts) => onChangeTxPower(Math.pow(10, logWatts))}
+              title="RF output power, 0.5W-200W -- higher power reaches further and sounds stronger to other stations"
+            />
             <Knob label="KEY SPEED" value={keySpeed} min={0} max={10} onChange={onChangeKeySpeed} />
           </div>
-          <div className="knob-row">
-            <Knob label="PROC" value={procLevel} min={0} max={10} onChange={onChangeProcLevel} />
-            <Knob label="MONI" value={moniLevel} min={0} max={10} onChange={onChangeMoniLevel} />
-            <Knob label="VOX DELAY" value={voxDelayKnob} min={0} max={10} onChange={onChangeVoxDelayKnob} />
-            <Knob size="small" label="VOX GAIN" value={voxGainKnob} min={0} max={10} onChange={onChangeVoxGainKnob} title="VOX sensitivity -- higher is more sensitive" />
-          </div>
           <div className="panel__antenna-section">
-            <div className="button-group__label">ANTENNA</div>
+            <div className="button-group__label">
+              ANTENNA{antennaMeta?.rotatable ? " · click a station to point the beam" : ""}
+            </div>
             <div className="antenna-grid">
               {ANTENNAS.map((a) => (
                 <PanelButton
@@ -552,7 +554,15 @@ export function RadioPanel(props: RadioPanelProps) {
                 />
               ))}
             </div>
-            <RotatorCompass headingDeg={heading} onChangeHeading={onChangeHeading} disabled={!antennaMeta?.rotatable} />
+            <RotatorCompass
+              headingDeg={heading}
+              onChangeHeading={onChangeHeading}
+              disabled={!antennaMeta?.rotatable}
+              ownGrid={ownGrid}
+              roster={roster}
+              ownId={ownId}
+              onPointAt={onPointAt}
+            />
           </div>
 
           <div className="panel__jacks">
@@ -612,48 +622,68 @@ export function RadioPanel(props: RadioPanelProps) {
             </div>
           </div>
 
-          <div className="panel__monitor-bay">
-            <div className="panel__side-info">
-              <div className="panel__roster-title">STATIONS ON FREQ</div>
-              <ul className="panel__roster">
-                {roster.map((s) => (
-                  <li
-                    key={s.id}
-                    className={[
-                      s.id === ownId ? "panel__roster-item--self" : "",
-                      s.transmitting ? "panel__roster-item--tx" : "",
-                      audibleSet.has(s.id) ? "panel__roster-item--audible" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                  >
-                    <span className="panel__roster-call">{s.callsign}</span>
-                    <span className="panel__roster-freq">
-                      {s.txFreqKHz.toFixed(1)} {s.mode}
-                    </span>
-                    {s.transmitting && <span className="panel__roster-tx-dot">TX</span>}
-                  </li>
-                ))}
-                {roster.length === 0 && <li className="panel__roster-empty">No stations connected</li>}
-              </ul>
+          <div className="panel__tuning-extras">
+            <div className="button-group">
+              <div className="button-group__label">TWIN PBT</div>
+              <div className="button-group__row">
+                <Knob
+                  size="small"
+                  label="PBT1"
+                  value={pbt1Hz}
+                  min={-1500}
+                  max={1500}
+                  format={(v) => `${v >= 0 ? "+" : ""}${Math.round(v)}`}
+                  onChange={onChangePbt1Hz}
+                  onReset={onClearPbt}
+                  title="Twin PBT inner ring -- same direction as PBT2 shifts the passband, opposite direction narrows it"
+                />
+                <Knob
+                  size="small"
+                  label="PBT2"
+                  value={pbt2Hz}
+                  min={-1500}
+                  max={1500}
+                  format={(v) => `${v >= 0 ? "+" : ""}${Math.round(v)}`}
+                  onChange={onChangePbt2Hz}
+                  onReset={onClearPbt}
+                  title="Twin PBT outer ring -- same direction as PBT1 shifts the passband, opposite direction narrows it"
+                />
+              </div>
             </div>
-            <div className="panel__side-info">
-              <div className="panel__log-title">BAND LOG</div>
-              <ul className="panel__log">
-                {events.map((e, i) => (
-                  <li key={i}>{e}</li>
-                ))}
-              </ul>
+
+            <div className="button-group">
+              <div className="button-group__label">RIT/XIT</div>
+              <div className="button-group__row button-group__row--end">
+                <PanelButton small label="RIT" active={ritEnabled} onClick={onToggleRit} />
+                <PanelButton small label="XIT" active={xitEnabled} onClick={onToggleXit} />
+                <button
+                  className={`panel-btn panel-btn--small ${xfcHeld ? "panel-btn--active" : ""}`}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    click();
+                    onXfcDown();
+                  }}
+                  onPointerUp={onXfcUp}
+                  onPointerLeave={() => xfcHeld && onXfcUp()}
+                  title="Hold to monitor the actual transmit frequency (suspends RIT/XIT offset, NR, Notch and Twin PBT)"
+                >
+                  XFC
+                </button>
+                <Knob size="small" label="OFFSET" value={offsetHz} min={-9990} max={9990} onChange={onChangeOffsetHz} />
+              </div>
             </div>
-            <div className="panel__side-info panel__side-info--map">
-              <div className="panel__roster-title">STATION MAP{antennaMeta?.rotatable ? " · click to point beam" : ""}</div>
-              <AntennaMap
-                ownGrid={ownGrid}
-                roster={roster}
-                ownId={ownId}
-                headingDeg={heading}
-                showHeading={!!antennaMeta?.rotatable}
-                onPointAt={onPointAt}
+
+            <div className="button-group">
+              <div className="button-group__label">SPLIT SHIFT</div>
+              <Knob
+                size="small"
+                label="TX-RX"
+                value={splitShiftHz}
+                min={-9990}
+                max={9990}
+                format={(v) => `${v >= 0 ? "+" : ""}${(v / 1000).toFixed(2)}k`}
+                onChange={onChangeSplitShiftHz}
+                onReset={() => onChangeSplitShiftHz(0)}
               />
             </div>
           </div>
@@ -704,68 +734,15 @@ export function RadioPanel(props: RadioPanelProps) {
             <PanelButton small label={`WIDTH:${notchWidthLabel}`} onClick={onCycleNotchWidth} title="Notch width: WIDE/MID/NAR" />
           </div>
 
-          <div className="button-group">
-            <div className="button-group__label">TWIN PBT</div>
-            <Knob
-              size="small"
-              label="PBT1"
-              value={pbt1Hz}
-              min={-1500}
-              max={1500}
-              format={(v) => `${v >= 0 ? "+" : ""}${Math.round(v)}`}
-              onChange={onChangePbt1Hz}
-              onReset={onClearPbt}
-              title="Twin PBT inner ring -- same direction as PBT2 shifts the passband, opposite direction narrows it"
-            />
-            <Knob
-              size="small"
-              label="PBT2"
-              value={pbt2Hz}
-              min={-1500}
-              max={1500}
-              format={(v) => `${v >= 0 ? "+" : ""}${Math.round(v)}`}
-              onChange={onChangePbt2Hz}
-              onReset={onClearPbt}
-              title="Twin PBT outer ring -- same direction as PBT1 shifts the passband, opposite direction narrows it"
-            />
-          </div>
-
-          <div className="button-group">
-            <div className="button-group__label">RIT/XIT</div>
-            <PanelButton small label="RIT" active={ritEnabled} onClick={onToggleRit} />
-            <PanelButton small label="XIT" active={xitEnabled} onClick={onToggleXit} />
-            <button
-              className={`panel-btn panel-btn--small ${xfcHeld ? "panel-btn--active" : ""}`}
-              onPointerDown={(e) => {
-                e.preventDefault();
-                click();
-                onXfcDown();
-              }}
-              onPointerUp={onXfcUp}
-              onPointerLeave={() => xfcHeld && onXfcUp()}
-              title="Hold to monitor the actual transmit frequency (suspends RIT/XIT offset, NR, Notch and Twin PBT)"
-            >
-              XFC
-            </button>
+          <div className="knob-row">
+            <Knob label="PROC" value={procLevel} min={0} max={10} onChange={onChangeProcLevel} />
+            <Knob label="MONI" value={moniLevel} min={0} max={10} onChange={onChangeMoniLevel} />
+            <Knob label="VOX DELAY" value={voxDelayKnob} min={0} max={10} onChange={onChangeVoxDelayKnob} />
+            <Knob size="small" label="VOX GAIN" value={voxGainKnob} min={0} max={10} onChange={onChangeVoxGainKnob} title="VOX sensitivity -- higher is more sensitive" />
           </div>
 
           <div className="knob-row">
-            <Knob size="small" label="OFFSET" value={offsetHz} min={-9990} max={9990} onChange={onChangeOffsetHz} />
-            <Knob label="AF⇒RF" value={rx.afRfBalance} min={0} max={10} onChange={(v) => onUpdateRx({ afRfBalance: v })} />
-          </div>
-
-          <div className="button-group">
-            <div className="button-group__label">SPLIT SHIFT</div>
-            <Knob
-              size="small"
-              label="TX-RX"
-              value={splitShiftHz}
-              min={-9990}
-              max={9990}
-              format={(v) => `${v >= 0 ? "+" : ""}${(v / 1000).toFixed(2)}k`}
-              onChange={onChangeSplitShiftHz}
-              onReset={() => onChangeSplitShiftHz(0)}
-            />
+            <Knob label="AF⇒RF" value={rx.afRfBalance} min={0} max={10} onChange={(v) => onUpdateRx({ afRfBalance: v })} title="Balances the S-meter/AGC between AF and RF gain response" />
           </div>
         </div>
       </div>
@@ -781,4 +758,11 @@ function formatFreq(freqKHz: number): string {
   const khz = Math.floor(freqKHz);
   const hz = Math.round((freqKHz - khz) * 1000);
   return `${khz.toLocaleString()}.${hz.toString().padStart(3, "0")}`;
+}
+
+const MIN_TX_WATTS = 0.5;
+const MAX_TX_WATTS = 200;
+
+function formatWatts(watts: number): string {
+  return watts < 10 ? `${watts.toFixed(1)}W` : `${Math.round(watts)}W`;
 }

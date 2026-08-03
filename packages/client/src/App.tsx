@@ -14,6 +14,7 @@ import { KodenSocket, type ConnectionStatus } from "./net/wsClient.js";
 import { AudioEngine, type AgcMode, type ReceiveParams } from "./audio/engine.js";
 import { beep, detent, power, relay, setSfxEnabled, squelchTail, startRotor, stopRotor } from "./audio/sfx.js";
 import { JoinForm } from "./ui/JoinForm.js";
+import { StationsLogWindow } from "./ui/StationsLogWindow.js";
 import { RadioPanel } from "./ui/RadioPanel.js";
 
 /**
@@ -149,7 +150,8 @@ export function App() {
   const [moniEnabled, setMoniEnabled] = useState(false);
   const [moniLevel, setMoniLevel] = useState(5);
   const [micGain, setMicGain] = useState(5);
-  const [txPower, setTxPower] = useState(10);
+  /** RF output power, watts (0.5-200W) -- fed straight to the server's propagation model, not just a cosmetic local level. */
+  const [txPower, setTxPower] = useState(100);
   const [keySpeed, setKeySpeed] = useState(5);
 
   const [dim, setDim] = useState(false);
@@ -386,7 +388,7 @@ export function App() {
   // it now actually affects what other stations hear, not just local audio gain.
   useEffect(() => {
     if (!joined) return;
-    socketRef.current?.send({ type: "power", watts: txPower * 10 });
+    socketRef.current?.send({ type: "power", watts: txPower });
   }, [joined, txPower]);
 
   // Push the antenna match (SWR) to the server whenever it changes -- a bad
@@ -871,174 +873,176 @@ export function App() {
   }
 
   return (
-    <RadioPanel
-      callsign={callsign}
-      connectionStatus={connectionStatus}
-      onPowerOff={handlePowerOff}
-      dim={dim}
-      onToggleDim={() => setDim((s) => !s)}
-      mScope={mScope}
-      onToggleMScope={() => setMScope((s) => !s)}
-      menuOpen={menuOpen}
-      onToggleMenu={() => setMenuOpen((s) => !s)}
-      onCloseMenu={() => setMenuOpen(false)}
-      tunerActive={tunerActive}
-      swr={swr}
-      onTuner={onTuner}
-      antenna={antenna}
-      onSelectAntenna={onSelectAntenna}
-      heading={heading}
-      onChangeHeading={onChangeHeading}
-      ownGrid={ownGrid}
-      onPointAt={onPointAt}
-      pttHeld={pttHeld}
-      onPttDown={onPttDown}
-      onPttUp={onPttUp}
-      micDevices={micDevices}
-      speakerDevices={speakerDevices}
-      selectedMicId={selectedMicId}
-      onSelectMic={onSelectMic}
-      selectedSpeakerId={selectedSpeakerId}
-      onSelectSpeaker={onSelectSpeaker}
-      speakerSelectionSupported={SPEAKER_SELECTION_SUPPORTED}
-      sfxEnabled={sfxEnabled}
-      onToggleSfx={onToggleSfx}
-      onSaveProfile={onSaveProfile}
-      solar={solar}
-      moniEnabled={moniEnabled}
-      onToggleMoni={() => setMoniEnabled((s) => !s)}
-      vfoA={vfoA}
-      vfoB={vfoB}
-      activeVfo={activeVfo}
-      onSelectVfo={(v) => {
-        setActiveVfo(v);
-        beep(500, 50);
-      }}
-      onSwapVfos={() => {
-        setVfoA(vfoB);
-        setVfoB(vfoA);
-        beep(600, 80);
-      }}
-      onEqualizeVfos={() => {
-        // Copies the displayed VFO's frequency/mode onto the other one,
-        // same as holding A/B on a real rig -- two short beeps confirm it.
-        setOtherVfoState(activeVfoState);
-        beep(700, 60);
-        window.setTimeout(() => beep(700, 60), 120);
-      }}
-      split={split}
-      onToggleSplit={() => {
-        setSplit((s) => !s);
-        beep(600, 60);
-      }}
-      band={band}
-      onTuneKnob={onTuneKnob}
-      onModeSelect={onModeSelect}
-      onBandSelect={onBandSelect}
-      vfoLocked={vfoLocked}
-      onToggleLock={() => setVfoLocked((s) => !s)}
-      tuneStep={tuneStep}
-      onSetTuneStep={(s) => setTuneStep((prev) => (prev === s ? "NORMAL" : s))}
-      onStepUp={() => stepFreq(1)}
-      onStepDown={() => stepFreq(-1)}
-      onAutoTune={onAutoTune}
-      ritEnabled={ritEnabled}
-      onToggleRit={() => setRitEnabled((s) => !s)}
-      xitEnabled={xitEnabled}
-      onToggleXit={() => setXitEnabled((s) => !s)}
-      offsetHz={offsetHz}
-      onChangeOffsetHz={(hz) => setOffsetHz(Math.round(hz / 10) * 10)}
-      splitShiftHz={splitShiftHz}
-      onChangeSplitShiftHz={(hz) => onChangeSplitShiftHz(Math.round(hz / 10) * 10)}
-      onClear={() => {
-        setOffsetHz(0);
-        beep(400, 60);
-      }}
-      xfcHeld={xfcHeld}
-      onXfcDown={onXfcDown}
-      onXfcUp={onXfcUp}
-      pbt1Hz={pbt1Hz}
-      pbt2Hz={pbt2Hz}
-      onChangePbt1Hz={(hz) => setPbt1Hz(Math.round(hz / 10) * 10)}
-      onChangePbt2Hz={(hz) => setPbt2Hz(Math.round(hz / 10) * 10)}
-      onClearPbt={() => {
-        setPbt1Hz(0);
-        setPbt2Hz(0);
-        beep(400, 60);
-      }}
-      filterWidth={filterWidth}
-      onCycleFilterWidth={() => {
-        setFilterWidth((w) => (w === "narrow" ? "normal" : w === "normal" ? "wide" : "narrow"));
-        beep(800, 50);
-      }}
-      vfoMMode={vfoMMode}
-      onToggleVfoM={() => setVfoMMode((m) => (m === "VFO" ? "M" : "VFO"))}
-      memIndex={memIndex}
-      onMemToVfo={() => {
-        // Recalls whichever memory is currently selected -- it must not
-        // itself pick a different memory (that's what the dial/step
-        // buttons are for in Memory mode); it just copies the one already
-        // shown into the working VFO and switches back to VFO mode, same
-        // as a real rig's M>VFO.
-        onMemoryRecall(memIndex);
-        setVfoMMode("VFO");
-      }}
-      onMemIn={onMemIn}
-      memory={memory}
-      onMemoryProgram={onMemoryProgram}
-      onMemoryRecall={onMemoryRecall}
-      memScanActive={memScanActive}
-      onToggleMemScan={() => setMemScanActive((s) => !s)}
-      mox={mox}
-      onToggleMox={toggleMox}
-      vox={vox}
-      onToggleVox={toggleVox}
-      transmitting={transmitting}
-      rx={rx}
-      onUpdateRx={updateRx}
-      agcMode={rx.agcMode}
-      onSelectAgc={(m: AgcMode) => updateRx({ agcMode: m })}
-      onToggleNb={() => updateRx({ nbLevel: rx.nbLevel > 0 ? 0 : 6 })}
-      onToggleNr={() => updateRx({ nrLevel: rx.nrLevel > 0 ? 0 : 6 })}
-      onToggleAtt={() => updateRx({ attEnabled: !rx.attEnabled })}
-      onToggleIpo={() => updateRx({ ipoEnabled: !rx.ipoEnabled })}
-      onToggleApf={() => updateRx({ apfEnabled: !rx.apfEnabled })}
-      onToggleDnr={() => updateRx({ dnrEnabled: !rx.dnrEnabled })}
-      onToggleNotch={() => updateRx({ notchDepth: rx.notchDepth > 0 ? 0 : 8 })}
-      onCycleNotchWidth={() => {
-        // WIDE cuts a broader chunk of spectrum (easier to find/silence
-        // interference with), NAR cuts only a sliver (less collateral
-        // damage to the wanted signal) -- WIDE -> MID -> NAR -> WIDE.
-        const next = rx.notchWidth <= 3 ? 5 : rx.notchWidth <= 7 ? 9 : 2;
-        updateRx({ notchWidth: next });
-        beep(600, 50);
-      }}
-      compEnabled={compEnabled}
-      onToggleComp={() => setCompEnabled((s) => !s)}
-      procLevel={procLevel}
-      onChangeProcLevel={setProcLevel}
-      moniLevel={moniLevel}
-      onChangeMoniLevel={setMoniLevel}
-      voxDelayKnob={voxDelayKnob}
-      onChangeVoxDelayKnob={setVoxDelayKnob}
-      voxGainKnob={voxGainKnob}
-      onChangeVoxGainKnob={setVoxGainKnob}
-      micGain={micGain}
-      onChangeMicGain={setMicGain}
-      txPower={txPower}
-      onChangeTxPower={setTxPower}
-      keySpeed={keySpeed}
-      onChangeKeySpeed={setKeySpeed}
-      scanning={scanning}
-      onToggleScan={() => setScanning((s) => !s)}
-      signalDb={displaySignalDb}
-      noiseFloorDb={displayNoiseFloorDb}
-      getLiveLevel={getLiveLevel}
-      txModLevel={txModLevel}
-      audibleStationIds={meter.audibleStationIds}
-      roster={roster}
-      ownId={ownId}
-      events={events}
-    />
+    <>
+      <StationsLogWindow roster={roster} ownId={ownId} audibleStationIds={meter.audibleStationIds} events={events} />
+      <RadioPanel
+        callsign={callsign}
+        connectionStatus={connectionStatus}
+        onPowerOff={handlePowerOff}
+        dim={dim}
+        onToggleDim={() => setDim((s) => !s)}
+        mScope={mScope}
+        onToggleMScope={() => setMScope((s) => !s)}
+        menuOpen={menuOpen}
+        onToggleMenu={() => setMenuOpen((s) => !s)}
+        onCloseMenu={() => setMenuOpen(false)}
+        tunerActive={tunerActive}
+        swr={swr}
+        onTuner={onTuner}
+        antenna={antenna}
+        onSelectAntenna={onSelectAntenna}
+        heading={heading}
+        onChangeHeading={onChangeHeading}
+        ownGrid={ownGrid}
+        onPointAt={onPointAt}
+        pttHeld={pttHeld}
+        onPttDown={onPttDown}
+        onPttUp={onPttUp}
+        micDevices={micDevices}
+        speakerDevices={speakerDevices}
+        selectedMicId={selectedMicId}
+        onSelectMic={onSelectMic}
+        selectedSpeakerId={selectedSpeakerId}
+        onSelectSpeaker={onSelectSpeaker}
+        speakerSelectionSupported={SPEAKER_SELECTION_SUPPORTED}
+        sfxEnabled={sfxEnabled}
+        onToggleSfx={onToggleSfx}
+        onSaveProfile={onSaveProfile}
+        solar={solar}
+        moniEnabled={moniEnabled}
+        onToggleMoni={() => setMoniEnabled((s) => !s)}
+        vfoA={vfoA}
+        vfoB={vfoB}
+        activeVfo={activeVfo}
+        onSelectVfo={(v) => {
+          setActiveVfo(v);
+          beep(500, 50);
+        }}
+        onSwapVfos={() => {
+          setVfoA(vfoB);
+          setVfoB(vfoA);
+          beep(600, 80);
+        }}
+        onEqualizeVfos={() => {
+          // Copies the displayed VFO's frequency/mode onto the other one,
+          // same as holding A/B on a real rig -- two short beeps confirm it.
+          setOtherVfoState(activeVfoState);
+          beep(700, 60);
+          window.setTimeout(() => beep(700, 60), 120);
+        }}
+        split={split}
+        onToggleSplit={() => {
+          setSplit((s) => !s);
+          beep(600, 60);
+        }}
+        band={band}
+        onTuneKnob={onTuneKnob}
+        onModeSelect={onModeSelect}
+        onBandSelect={onBandSelect}
+        vfoLocked={vfoLocked}
+        onToggleLock={() => setVfoLocked((s) => !s)}
+        tuneStep={tuneStep}
+        onSetTuneStep={(s) => setTuneStep((prev) => (prev === s ? "NORMAL" : s))}
+        onStepUp={() => stepFreq(1)}
+        onStepDown={() => stepFreq(-1)}
+        onAutoTune={onAutoTune}
+        ritEnabled={ritEnabled}
+        onToggleRit={() => setRitEnabled((s) => !s)}
+        xitEnabled={xitEnabled}
+        onToggleXit={() => setXitEnabled((s) => !s)}
+        offsetHz={offsetHz}
+        onChangeOffsetHz={(hz) => setOffsetHz(Math.round(hz / 10) * 10)}
+        splitShiftHz={splitShiftHz}
+        onChangeSplitShiftHz={(hz) => onChangeSplitShiftHz(Math.round(hz / 10) * 10)}
+        onClear={() => {
+          setOffsetHz(0);
+          beep(400, 60);
+        }}
+        xfcHeld={xfcHeld}
+        onXfcDown={onXfcDown}
+        onXfcUp={onXfcUp}
+        pbt1Hz={pbt1Hz}
+        pbt2Hz={pbt2Hz}
+        onChangePbt1Hz={(hz) => setPbt1Hz(Math.round(hz / 10) * 10)}
+        onChangePbt2Hz={(hz) => setPbt2Hz(Math.round(hz / 10) * 10)}
+        onClearPbt={() => {
+          setPbt1Hz(0);
+          setPbt2Hz(0);
+          beep(400, 60);
+        }}
+        filterWidth={filterWidth}
+        onCycleFilterWidth={() => {
+          setFilterWidth((w) => (w === "narrow" ? "normal" : w === "normal" ? "wide" : "narrow"));
+          beep(800, 50);
+        }}
+        vfoMMode={vfoMMode}
+        onToggleVfoM={() => setVfoMMode((m) => (m === "VFO" ? "M" : "VFO"))}
+        memIndex={memIndex}
+        onMemToVfo={() => {
+          // Recalls whichever memory is currently selected -- it must not
+          // itself pick a different memory (that's what the dial/step
+          // buttons are for in Memory mode); it just copies the one already
+          // shown into the working VFO and switches back to VFO mode, same
+          // as a real rig's M>VFO.
+          onMemoryRecall(memIndex);
+          setVfoMMode("VFO");
+        }}
+        onMemIn={onMemIn}
+        memory={memory}
+        onMemoryProgram={onMemoryProgram}
+        onMemoryRecall={onMemoryRecall}
+        memScanActive={memScanActive}
+        onToggleMemScan={() => setMemScanActive((s) => !s)}
+        mox={mox}
+        onToggleMox={toggleMox}
+        vox={vox}
+        onToggleVox={toggleVox}
+        transmitting={transmitting}
+        rx={rx}
+        onUpdateRx={updateRx}
+        agcMode={rx.agcMode}
+        onSelectAgc={(m: AgcMode) => updateRx({ agcMode: m })}
+        onToggleNb={() => updateRx({ nbLevel: rx.nbLevel > 0 ? 0 : 6 })}
+        onToggleNr={() => updateRx({ nrLevel: rx.nrLevel > 0 ? 0 : 6 })}
+        onToggleAtt={() => updateRx({ attEnabled: !rx.attEnabled })}
+        onToggleIpo={() => updateRx({ ipoEnabled: !rx.ipoEnabled })}
+        onToggleApf={() => updateRx({ apfEnabled: !rx.apfEnabled })}
+        onToggleDnr={() => updateRx({ dnrEnabled: !rx.dnrEnabled })}
+        onToggleNotch={() => updateRx({ notchDepth: rx.notchDepth > 0 ? 0 : 8 })}
+        onCycleNotchWidth={() => {
+          // WIDE cuts a broader chunk of spectrum (easier to find/silence
+          // interference with), NAR cuts only a sliver (less collateral
+          // damage to the wanted signal) -- WIDE -> MID -> NAR -> WIDE.
+          const next = rx.notchWidth <= 3 ? 5 : rx.notchWidth <= 7 ? 9 : 2;
+          updateRx({ notchWidth: next });
+          beep(600, 50);
+        }}
+        compEnabled={compEnabled}
+        onToggleComp={() => setCompEnabled((s) => !s)}
+        procLevel={procLevel}
+        onChangeProcLevel={setProcLevel}
+        moniLevel={moniLevel}
+        onChangeMoniLevel={setMoniLevel}
+        voxDelayKnob={voxDelayKnob}
+        onChangeVoxDelayKnob={setVoxDelayKnob}
+        voxGainKnob={voxGainKnob}
+        onChangeVoxGainKnob={setVoxGainKnob}
+        micGain={micGain}
+        onChangeMicGain={setMicGain}
+        txPower={txPower}
+        onChangeTxPower={setTxPower}
+        keySpeed={keySpeed}
+        onChangeKeySpeed={setKeySpeed}
+        scanning={scanning}
+        onToggleScan={() => setScanning((s) => !s)}
+        signalDb={displaySignalDb}
+        noiseFloorDb={displayNoiseFloorDb}
+        getLiveLevel={getLiveLevel}
+        txModLevel={txModLevel}
+        audibleStationIds={meter.audibleStationIds}
+        roster={roster}
+        ownId={ownId}
+      />
+    </>
   );
 }

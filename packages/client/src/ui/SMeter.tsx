@@ -3,13 +3,15 @@ import { MeterBar } from "./MeterBar.js";
 
 interface SMeterProps {
   signalDb: number;
-  minDb?: number;
-  maxDb?: number;
+  /** The band's current ambient noise floor (same reference frame as signalDb). */
+  noiseFloorDb: number;
   /**
    * Live receive audio level (0..1 RMS/peak), read directly off actual
-   * playback. Blended in on top of the server-reported signalDb so the
-   * needle visibly reacts to real interference and signal peaks as they're
-   * actually heard, not just the server's slower periodic meter updates.
+   * playback. Blended in on top of the server-reported signalDb as a small,
+   * bounded amount of extra flutter so the needle visibly kicks on real
+   * interference/voice peaks -- capped low enough that AGC-normalized
+   * background noise (which is loud in its own right) can't swamp the
+   * reading and mask whether a real signal is actually present.
    */
   getLiveLevel?: () => { rms: number; peak: number };
 }
@@ -32,11 +34,15 @@ function sReadout(normalized: number): string {
   return `S9+${overDb}`;
 }
 
-export function SMeter({ signalDb, minDb = -95, maxDb = 40, getLiveLevel }: SMeterProps) {
+export function SMeter({ signalDb, noiseFloorDb, getLiveLevel }: SMeterProps) {
+  // Matches the waterfall's own-signal bump: read relative to the band's
+  // actual noise floor (not a fixed absolute dB scale), so an empty
+  // frequency reads near the bottom of the scale and the two displays never
+  // disagree about whether a real signal is present.
   const baseline = useMemo(() => {
-    const t = (signalDb - minDb) / (maxDb - minDb);
+    const t = (signalDb - noiseFloorDb) / 40;
     return Math.max(0, Math.min(1, t));
-  }, [signalDb, minDb, maxDb]);
+  }, [signalDb, noiseFloorDb]);
 
   const [liveBoost, setLiveBoost] = useState(0);
   const getLiveLevelRef = useRef(getLiveLevel);
@@ -63,7 +69,7 @@ export function SMeter({ signalDb, minDb = -95, maxDb = 40, getLiveLevel }: SMet
     return () => cancelAnimationFrame(raf);
   }, [getLiveLevel]);
 
-  const normalized = Math.max(baseline, liveBoost);
+  const normalized = Math.max(0, Math.min(1, baseline + liveBoost * 0.12));
 
   return <MeterBar label="S-METER" value={normalized} colorAt={sColor} readout={sReadout(normalized)} />;
 }
