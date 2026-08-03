@@ -1,0 +1,96 @@
+import { useRef, useState } from "react";
+import type { StationInfo } from "@koden/shared";
+
+interface StationsLogWindowProps {
+  roster: StationInfo[];
+  ownId: string | null;
+  audibleStationIds: string[];
+  events: string[];
+}
+
+// Sits just above the panel's own top edge, in the page margin, so its
+// collapsed title bar doesn't overlap the POWER button underneath it.
+const DEFAULT_POS = { x: 24, y: 2 };
+
+/**
+ * The station roster and band log, in their own floating window instead of
+ * fixed inside the radio body -- drag the title bar to move it anywhere on
+ * screen, including out over the page margin next to the radio.
+ */
+export function StationsLogWindow({ roster, ownId, audibleStationIds, events }: StationsLogWindowProps) {
+  const [pos, setPos] = useState(DEFAULT_POS);
+  // Starts collapsed to just its title bar -- expanded by default it would
+  // sit right on top of the S-meter/SWR display at typical viewport widths.
+  const [collapsed, setCollapsed] = useState(true);
+  const dragStart = useRef<{ x: number; y: number; posX: number; posY: number } | null>(null);
+  const audibleSet = new Set(audibleStationIds);
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    (e.target as Element).setPointerCapture(e.pointerId);
+    dragStart.current = { x: e.clientX, y: e.clientY, posX: pos.x, posY: pos.y };
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragStart.current) return;
+    const dx = e.clientX - dragStart.current.x;
+    const dy = e.clientY - dragStart.current.y;
+    setPos({
+      x: Math.max(0, dragStart.current.posX + dx),
+      y: Math.max(0, dragStart.current.posY + dy),
+    });
+  };
+  const onPointerUp = () => {
+    dragStart.current = null;
+  };
+
+  return (
+    <div className="float-win" style={{ left: pos.x, top: pos.y }}>
+      <div className="float-win__titlebar" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
+        <span className="float-win__title">STATIONS &amp; LOG</span>
+        <button
+          type="button"
+          className="float-win__collapse"
+          onClick={() => setCollapsed((c) => !c)}
+          title={collapsed ? "Expand" : "Collapse"}
+        >
+          {collapsed ? "▢" : "_"}
+        </button>
+      </div>
+      {!collapsed && (
+        <div className="float-win__body">
+          <div className="panel__side-info">
+            <div className="panel__roster-title">STATIONS ON FREQ</div>
+            <ul className="panel__roster">
+              {roster.map((s) => (
+                <li
+                  key={s.id}
+                  className={[
+                    s.id === ownId ? "panel__roster-item--self" : "",
+                    s.transmitting ? "panel__roster-item--tx" : "",
+                    audibleSet.has(s.id) ? "panel__roster-item--audible" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                >
+                  <span className="panel__roster-call">{s.callsign}</span>
+                  <span className="panel__roster-freq">
+                    {s.txFreqKHz.toFixed(1)} {s.mode}
+                  </span>
+                  {s.transmitting && <span className="panel__roster-tx-dot">TX</span>}
+                </li>
+              ))}
+              {roster.length === 0 && <li className="panel__roster-empty">No stations connected</li>}
+            </ul>
+          </div>
+          <div className="panel__side-info">
+            <div className="panel__log-title">BAND LOG</div>
+            <ul className="panel__log">
+              {events.map((e, i) => (
+                <li key={i}>{e}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

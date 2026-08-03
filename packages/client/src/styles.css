@@ -96,7 +96,7 @@ button {
   background: linear-gradient(#26262a, #17171a 40%, #101012);
   border: 1px solid #000;
   border-radius: 14px;
-  padding: 18px 22px 14px;
+  padding: 14px 22px 10px;
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7), inset 0 0 0 1px #3a3a3e;
   overflow-x: auto;
 }
@@ -387,7 +387,7 @@ button {
 .panel__buttonrow {
   display: flex;
   gap: 8px;
-  margin: 12px 0;
+  margin: 8px 0;
 }
 
 .panel__overlay {
@@ -461,7 +461,7 @@ button {
   background: #101013;
   border: 1px solid #2a2a2e;
   border-radius: 8px;
-  padding: 14px;
+  padding: 10px;
 }
 
 .panel__antenna-section {
@@ -517,6 +517,13 @@ button {
   display: flex;
   gap: 8px;
   justify-content: center;
+}
+
+.panel__tuning-extras {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
 }
 
 .panel__right-col {
@@ -610,6 +617,14 @@ button {
   border: 1px solid #2a2a2e;
   border-radius: 6px;
   padding: 8px;
+}
+.button-group__row {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+}
+.button-group__row--end {
+  align-items: flex-end;
 }
 .button-group__label {
   font-size: 10px;
@@ -820,19 +835,7 @@ button {
   box-shadow: 0 0 8px rgba(255, 59, 59, 0.5);
 }
 
-/* ---------- Waterfall + roster ---------- */
-
-.panel__monitor-bay {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  flex: 1;
-  margin-top: 16px;
-  background: #08080a;
-  border: 1px solid #2a2a2e;
-  border-radius: 8px;
-  padding: 10px;
-}
+/* ---------- Waterfall ---------- */
 
 .waterfall {
   position: relative;
@@ -896,10 +899,6 @@ button {
   font-size: 12px;
   max-height: 220px;
 }
-.panel__side-info--map {
-  max-height: none;
-  align-items: center;
-}
 
 /* ---------- Rotator compass ---------- */
 
@@ -910,8 +909,8 @@ button {
   gap: 4px;
 }
 .rotator__dial {
-  width: 130px;
-  height: 130px;
+  width: 128px;
+  height: 128px;
   touch-action: none;
   cursor: grab;
 }
@@ -944,19 +943,8 @@ button {
   letter-spacing: 1px;
 }
 
-/* ---------- Antenna map ---------- */
+/* ---------- Rotator/station-map overlay (rings, dots, labels shared with the rotator dial above) ---------- */
 
-.antenna-map {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.antenna-map__svg {
-  width: 100%;
-  max-width: 160px;
-  aspect-ratio: 1;
-}
 .antenna-map__ring {
   fill: none;
   stroke: #2a2a2e;
@@ -969,14 +957,6 @@ button {
   fill: #7a6a3f;
   font-size: 9px;
   font-family: "Courier New", monospace;
-}
-.antenna-map__heading-arrow {
-  stroke: #ff5a3a;
-  stroke-width: 2;
-  color: #ff5a3a;
-}
-.antenna-map__self {
-  fill: #e8b84b;
 }
 .antenna-map__station {
   cursor: pointer;
@@ -1104,8 +1084,56 @@ button {
 }
 
 .panel__footer {
-  margin-top: 12px;
+  margin-top: 8px;
   font-size: 11px;
   color: #666;
   text-align: center;
+}
+
+/* ---------- Floating stations/log window ---------- */
+
+.float-win {
+  position: fixed;
+  z-index: 500;
+  width: 340px;
+  background: linear-gradient(#1c1c1f, #101012);
+  border: 1px solid #333;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+.float-win__titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: linear-gradient(#2a2a2e, #1a1a1d);
+  border-bottom: 1px solid #333;
+  border-radius: 8px 8px 0 0;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.float-win__title {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #e8b84b;
+}
+.float-win__collapse {
+  background: none;
+  border: 1px solid #444;
+  border-radius: 3px;
+  color: #ccc;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.float-win__body {
+  display: flex;
+  gap: 12px;
+  padding: 10px;
+}
+.float-win__body .panel__side-info {
+  min-width: 0;
 }
