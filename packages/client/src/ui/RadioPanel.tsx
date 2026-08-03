@@ -95,6 +95,9 @@ interface RadioPanelProps {
   offsetHz: number;
   onChangeOffsetHz: (hz: number) => void;
   onClear: () => void;
+  /** TX-vs-RX shift when SPLIT is on (Hz, +above/-below the RX VFO). */
+  splitShiftHz: number;
+  onChangeSplitShiftHz: (hz: number) => void;
 
   filterWidth: FilterWidth;
   onCycleFilterWidth: () => void;
@@ -226,6 +229,8 @@ export function RadioPanel(props: RadioPanelProps) {
     offsetHz,
     onChangeOffsetHz,
     onClear,
+    splitShiftHz,
+    onChangeSplitShiftHz,
     filterWidth,
     onCycleFilterWidth,
     vfoMMode,
@@ -377,7 +382,7 @@ export function RadioPanel(props: RadioPanelProps) {
                 <span>BAND {band?.id.toUpperCase() ?? "--"}</span>
                 <span>R.FLT {filterLabel}</span>
                 <span>M.CH {memIndex}</span>
-                <span>{split ? "SPLIT" : ""}</span>
+                <span>{split ? `SPLIT ${splitShiftHz >= 0 ? "+" : ""}${(splitShiftHz / 1000).toFixed(2)}` : ""}</span>
                 <span>{antennaLabel}</span>
               </div>
               <Waterfall
@@ -619,7 +624,7 @@ export function RadioPanel(props: RadioPanelProps) {
           <div className="panel__memory-row">
             <div className="button-group">
               <div className="button-group__label">MEMORY {memIndex}</div>
-              <PanelButton small label="M&gt;VFO" onClick={onMemToVfo} title="Recall next memory channel" />
+              <PanelButton small label="M&gt;VFO" onClick={onMemToVfo} title="Recall the selected memory into the VFO" />
               <PanelButton small label="M.IN" onClick={onMemIn} title="Store this VFO to the current memory channel" />
               <PanelButton small label="MW" active={memScanActive} onClick={onToggleMemScan} title="Memory scan" />
             </div>
@@ -655,6 +660,20 @@ export function RadioPanel(props: RadioPanelProps) {
             <Knob size="small" label="OFFSET" value={offsetHz} min={-9990} max={9990} onChange={onChangeOffsetHz} />
             <Knob label="IF SHIFT" value={rx.ifShiftHz} min={-1500} max={1500} onChange={(v) => onUpdateRx({ ifShiftHz: v })} />
             <Knob label="AF⇒RF" value={rx.afRfBalance} min={0} max={10} onChange={(v) => onUpdateRx({ afRfBalance: v })} />
+          </div>
+
+          <div className="button-group">
+            <div className="button-group__label">SPLIT SHIFT</div>
+            <Knob
+              size="small"
+              label="TX-RX"
+              value={splitShiftHz}
+              min={-9990}
+              max={9990}
+              format={(v) => `${v >= 0 ? "+" : ""}${(v / 1000).toFixed(2)}k`}
+              onChange={onChangeSplitShiftHz}
+              onReset={() => onChangeSplitShiftHz(0)}
+            />
           </div>
         </div>
       </div>
