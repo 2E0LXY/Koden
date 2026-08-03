@@ -142,6 +142,7 @@ interface RadioPanelProps {
   onToggleApf: () => void;
   onToggleDnr: () => void;
   onToggleNotch: () => void;
+  onCycleNotchWidth: () => void;
 
   compEnabled: boolean;
   onToggleComp: () => void;
@@ -284,6 +285,7 @@ export function RadioPanel(props: RadioPanelProps) {
     onToggleApf,
     onToggleDnr,
     onToggleNotch,
+    onCycleNotchWidth,
     compEnabled,
     onToggleComp,
     procLevel,
@@ -343,6 +345,7 @@ export function RadioPanel(props: RadioPanelProps) {
     ? Math.max(0.04, txModLevel)
     : 0.94 + Math.sin(performance.now() / 137) * 0.05;
   const filterLabel = filterWidth === "narrow" ? "NAR" : filterWidth === "normal" ? "MID" : "WIDE";
+  const notchWidthLabel = rx.notchWidth <= 3 ? "WIDE" : rx.notchWidth <= 7 ? "MID" : "NAR";
   const antennaMeta = antennaById(antenna);
   const antennaLabel = antennaMeta
     ? `${antennaMeta.name}${antennaMeta.rotatable ? ` ${Math.round(heading).toString().padStart(3, "0")}°` : ""}`
@@ -689,8 +692,16 @@ export function RadioPanel(props: RadioPanelProps) {
               onReset={() => onUpdateRx({ width: 10 })}
               title="Receive filter bandwidth"
             />
-            <Knob label="NOTCH" value={rx.notchFreqHz} min={300} max={3000} onChange={(v) => onUpdateRx({ notchFreqHz: v })} />
-            <Knob size="small" label="NOTCH WIDTH" value={rx.notchWidth} min={0} max={10} onChange={(v) => onUpdateRx({ notchWidth: v })} />
+            <Knob
+              label="NOTCH"
+              value={rx.notchFreqHz}
+              min={300}
+              max={3000}
+              format={(v) => `${Math.round(v)}Hz`}
+              onChange={(v) => onUpdateRx({ notchFreqHz: v })}
+              title="Notch position -- rotate to tune it onto the interfering tone"
+            />
+            <PanelButton small label={`WIDTH:${notchWidthLabel}`} onClick={onCycleNotchWidth} title="Notch width: WIDE/MID/NAR" />
           </div>
 
           <div className="button-group">

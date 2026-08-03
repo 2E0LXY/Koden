@@ -1005,6 +1005,14 @@ export function App() {
       onToggleApf={() => updateRx({ apfEnabled: !rx.apfEnabled })}
       onToggleDnr={() => updateRx({ dnrEnabled: !rx.dnrEnabled })}
       onToggleNotch={() => updateRx({ notchDepth: rx.notchDepth > 0 ? 0 : 8 })}
+      onCycleNotchWidth={() => {
+        // WIDE cuts a broader chunk of spectrum (easier to find/silence
+        // interference with), NAR cuts only a sliver (less collateral
+        // damage to the wanted signal) -- WIDE -> MID -> NAR -> WIDE.
+        const next = rx.notchWidth <= 3 ? 5 : rx.notchWidth <= 7 ? 9 : 2;
+        updateRx({ notchWidth: next });
+        beep(600, 50);
+      }}
       compEnabled={compEnabled}
       onToggleComp={() => setCompEnabled((s) => !s)}
       procLevel={procLevel}
