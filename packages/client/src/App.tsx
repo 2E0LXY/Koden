@@ -54,6 +54,10 @@ interface VfoState {
 }
 
 type MemorySlot = VfoState | null;
+interface BandMemoryEntry extends VfoState {
+  attEnabled: boolean;
+  ipoEnabled: boolean;
+}
 export type TuneStep = "FINE" | "NORMAL" | "COARSE" | "FAST";
 
 const STEP_KHZ: Record<TuneStep, number> = {
@@ -113,6 +117,17 @@ export function App() {
   const [ritEnabled, setRitEnabled] = useState(false);
   const [xitEnabled, setXitEnabled] = useState(false);
   const [offsetHz, setOffsetHz] = useState(0);
+  const [xfcHeld, setXfcHeld] = useState(false);
+
+  // Twin PBT's real mechanism: two physical controls (PBT1/PBT2). Rotating
+  // them the *same* direction shifts the passband (our existing IF shift);
+  // rotating them in *opposite* directions narrows it instead (rejecting
+  // interference on both sides at once) -- so both derive from the same
+  // pair of raw positions rather than being independent knobs.
+  const [pbt1Hz, setPbt1Hz] = useState(0);
+  const [pbt2Hz, setPbt2Hz] = useState(0);
+  const ifShiftHz = (pbt1Hz + pbt2Hz) / 2;
+  const pbtQ = Math.max(0, Math.min(10, Math.abs(pbt1Hz - pbt2Hz) / 300));
 
   const [filterWidth, setFilterWidth] = useState<FilterWidth>("normal");
 
@@ -199,15 +214,25 @@ export function App() {
   // Remembers the active VFO's frequency/mode per band -- a simplified,
   // single-register version of the real radio's 3-deep band stacking
   // registers -- so reselecting a band later returns to where you left
-  // off instead of always resetting to the band edge.
-  const [bandMemory, setBandMemory] = useState<Record<string, VfoState>>({});
+  // off instead of always resetting to the band edge. Also remembers each
+  // band's preamp/attenuator setting independently, same as a real radio.
+  const [bandMemory, setBandMemory] = useState<Record<string, BandMemoryEntry>>({});
   useEffect(() => {
     if (!band) return;
-    setBandMemory((prev) => ({ ...prev, [band.id]: activeVfoState }));
-  }, [band, activeVfoState]);
-  const listenFreqKHz = activeVfoState.freqKHz + (ritEnabled ? offsetHz / 1000 : 0);
+    setBandMemory((prev) => ({
+      ...prev,
+      [band.id]: { ...activeVfoState, attEnabled: rx.attEnabled, ipoEnabled: rx.ipoEnabled },
+    }));
+  }, [band, activeVfoState, rx.attEnabled, rx.ipoEnabled]);
   const txFreqBase = split ? otherVfo.freqKHz : activeVfoState.freqKHz;
   const txFreqKHz = txFreqBase + (xitEnabled ? offsetHz / 1000 : 0);
+  // XFC (transmit frequency check): held, it monitors the actual operating
+  // (transmit) frequency instead of the normal receive frequency --
+  // whether that's because RIT is shifting receive away from where you'd
+  // actually transmit, or because SPLIT means you're listening on a
+  // different VFO than you'd key up on. txFreqKHz already accounts for
+  // both, so XFC just switches to it while held.
+  const listenFreqKHz = xfcHeld ? txFreqKHz : activeVfoState.freqKHz + (ritEnabled ? offsetHz / 1000 : 0);
   // The other VFO's offset from the active one, purely for SPLIT's shift
   // knob/readout -- 0 whenever SPLIT is off, since there's no TX/RX
   // relationship to show.
@@ -329,6 +354,13 @@ export function App() {
     if (!joined) return;
     socketRef.current?.send({ type: "antenna", antenna, headingDeg: heading });
   }, [joined, antenna, heading]);
+
+  // Twin PBT's derived shift/narrowing values feed straight into the
+  // existing ifShiftHz/pbtQ receive params -- the DSP itself doesn't need
+  // to know it's driven by two raw dial positions instead of one.
+  useEffect(() => {
+    setRx((prev) => ({ ...prev, ifShiftHz, pbtQ }));
+  }, [ifShiftHz, pbtQ]);
 
   useEffect(() => {
     audioEngineRef.current?.updateReceiveParams(rx);
@@ -577,6 +609,39 @@ export function App() {
     [vfoLocked, vfoMMode, tuneStep, cycleMemory, setActiveVfoState],
   );
 
+  const onAutoTune = useCallback(() => {
+    if (activeVfoState.mode !== "CW") {
+      beep(220, 150);
+      return;
+    }
+    // Snaps to the nearest audible CW signal's actual dial frequency
+    // within ±500Hz, same range and behavior as the real radio's CW
+    // auto-tune -- a weak/inaudible one is treated as too unreliable to
+    // lock onto, same as the manual's "may cause mistuning" warning.
+    const candidates = roster.filter(
+      (s) =>
+        s.id !== ownId &&
+        s.mode === "CW" &&
+        meter.audibleStationIds.includes(s.id) &&
+        Math.abs(s.freqKHz - listenFreqKHz) <= 0.5,
+    );
+    if (candidates.length === 0) {
+      beep(220, 150);
+      logEvent("AUTO TUNE: no CW signal found within range.");
+      return;
+    }
+    const target = candidates.reduce((a, b) =>
+      Math.abs(a.freqKHz - listenFreqKHz) < Math.abs(b.freqKHz - listenFreqKHz) ? a : b,
+    );
+    if (ritEnabled) {
+      setOffsetHz(Math.round((target.freqKHz - activeVfoState.freqKHz) * 1000));
+    } else {
+      setActiveVfoState((prev) => ({ ...prev, freqKHz: target.freqKHz }));
+    }
+    beep(900, 100);
+    logEvent(`AUTO TUNE: locked to ${target.callsign} on ${target.freqKHz.toFixed(1)} kHz.`);
+  }, [activeVfoState, roster, ownId, meter.audibleStationIds, listenFreqKHz, ritEnabled, setActiveVfoState, logEvent]);
+
   const onModeSelect = useCallback(
     (mode: Mode) => {
       setActiveVfoState((prev) => ({ ...prev, mode }));
@@ -591,7 +656,16 @@ export function App() {
       const remembered = bandMemory[b.id];
       setActiveVfoState(remembered ?? { freqKHz: b.rangeKHz[0] + 50, mode: b.defaultMode });
       const mode = remembered?.mode ?? b.defaultMode;
-      if (mode !== "FM") setRx((prev) => ({ ...prev, agcMode: defaultAgcForMode(mode) }));
+      // Each band remembers its own preamp/attenuator setting, same as a
+      // real radio -- a band you haven't visited yet starts at the
+      // factory default (both off) rather than carrying over whatever the
+      // band you're leaving had set.
+      setRx((prev) => ({
+        ...prev,
+        agcMode: mode !== "FM" ? defaultAgcForMode(mode) : prev.agcMode,
+        attEnabled: remembered?.attEnabled ?? false,
+        ipoEnabled: remembered?.ipoEnabled ?? false,
+      }));
       // A real antenna's match is frequency-dependent, so hopping bands
       // knocks the SWR back out of tune until the tuner is re-run.
       setSwr(1.8 + Math.random() * 2.7);
@@ -727,6 +801,15 @@ export function App() {
   const onPttDown = useCallback(() => setPttHeld(true), []);
   const onPttUp = useCallback(() => setPttHeld(false), []);
 
+  const onXfcDown = useCallback(() => {
+    setXfcHeld(true);
+    audioEngineRef.current?.setXfcBypass(true);
+  }, []);
+  const onXfcUp = useCallback(() => {
+    setXfcHeld(false);
+    audioEngineRef.current?.setXfcBypass(false);
+  }, []);
+
   const onSelectMic = useCallback((deviceId: string) => {
     setSelectedMicId(deviceId);
     audioEngineRef.current
@@ -858,6 +941,7 @@ export function App() {
       onSetTuneStep={(s) => setTuneStep((prev) => (prev === s ? "NORMAL" : s))}
       onStepUp={() => stepFreq(1)}
       onStepDown={() => stepFreq(-1)}
+      onAutoTune={onAutoTune}
       ritEnabled={ritEnabled}
       onToggleRit={() => setRitEnabled((s) => !s)}
       xitEnabled={xitEnabled}
@@ -868,6 +952,18 @@ export function App() {
       onChangeSplitShiftHz={(hz) => onChangeSplitShiftHz(Math.round(hz / 10) * 10)}
       onClear={() => {
         setOffsetHz(0);
+        beep(400, 60);
+      }}
+      xfcHeld={xfcHeld}
+      onXfcDown={onXfcDown}
+      onXfcUp={onXfcUp}
+      pbt1Hz={pbt1Hz}
+      pbt2Hz={pbt2Hz}
+      onChangePbt1Hz={(hz) => setPbt1Hz(Math.round(hz / 10) * 10)}
+      onChangePbt2Hz={(hz) => setPbt2Hz(Math.round(hz / 10) * 10)}
+      onClearPbt={() => {
+        setPbt1Hz(0);
+        setPbt2Hz(0);
         beep(400, 60);
       }}
       filterWidth={filterWidth}
