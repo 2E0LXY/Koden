@@ -443,7 +443,7 @@ export function modeNoiseGainDb(mode: Mode, filterWidth: FilterWidth): number {
 }
 
 /** Deterministic 0..1 hash of a string, used to pick "random" starting values that stay the same for the same band/mode instead of differing on every retune. */
-function hashFrac(s: string): number {
+export function hashFrac(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);

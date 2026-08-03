@@ -8,9 +8,17 @@ interface StationsLogWindowProps {
   events: string[];
 }
 
-// Sits just above the panel's own top edge, in the page margin, so its
-// collapsed title bar doesn't overlap the POWER button underneath it.
-const DEFAULT_POS = { x: 24, y: 2 };
+const WINDOW_WIDTH = 340;
+
+// Defaults near the top-right corner of the viewport -- roughly over the
+// decorative nameplate photo rather than any live instrument. The panel
+// fills nearly the whole viewport at typical widths, so there's no truly
+// empty spot to default into, but overlapping a photo costs nothing
+// functionally. Computed from the viewport (not a fixed pixel guess) so it
+// stays sensible across different window sizes.
+function defaultPos(): { x: number; y: number } {
+  return { x: Math.max(8, window.innerWidth - WINDOW_WIDTH - 20), y: 4 };
+}
 
 /**
  * The station roster and band log, in their own floating window instead of
@@ -18,10 +26,8 @@ const DEFAULT_POS = { x: 24, y: 2 };
  * screen, including out over the page margin next to the radio.
  */
 export function StationsLogWindow({ roster, ownId, audibleStationIds, events }: StationsLogWindowProps) {
-  const [pos, setPos] = useState(DEFAULT_POS);
-  // Starts collapsed to just its title bar -- expanded by default it would
-  // sit right on top of the S-meter/SWR display at typical viewport widths.
-  const [collapsed, setCollapsed] = useState(true);
+  const [pos, setPos] = useState(defaultPos);
+  const [collapsed, setCollapsed] = useState(false);
   const dragStart = useRef<{ x: number; y: number; posX: number; posY: number } | null>(null);
   const audibleSet = new Set(audibleStationIds);
 
