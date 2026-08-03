@@ -74,6 +74,7 @@ interface RadioPanelProps {
   activeVfo: "A" | "B";
   onSelectVfo: (v: "A" | "B") => void;
   onSwapVfos: () => void;
+  onEqualizeVfos: () => void;
   split: boolean;
   onToggleSplit: () => void;
 
@@ -129,6 +130,7 @@ interface RadioPanelProps {
   onToggleIpo: () => void;
   onToggleApf: () => void;
   onToggleDnr: () => void;
+  onToggleNotch: () => void;
 
   compEnabled: boolean;
   onToggleComp: () => void;
@@ -138,6 +140,8 @@ interface RadioPanelProps {
   onChangeMoniLevel: (v: number) => void;
   voxDelayKnob: number;
   onChangeVoxDelayKnob: (v: number) => void;
+  voxGainKnob: number;
+  onChangeVoxGainKnob: (v: number) => void;
   micGain: number;
   onChangeMicGain: (v: number) => void;
   txPower: number;
@@ -210,6 +214,7 @@ export function RadioPanel(props: RadioPanelProps) {
     activeVfo,
     onSelectVfo,
     onSwapVfos,
+    onEqualizeVfos,
     split,
     onToggleSplit,
     band,
@@ -258,6 +263,7 @@ export function RadioPanel(props: RadioPanelProps) {
     onToggleIpo,
     onToggleApf,
     onToggleDnr,
+    onToggleNotch,
     compEnabled,
     onToggleComp,
     procLevel,
@@ -266,6 +272,8 @@ export function RadioPanel(props: RadioPanelProps) {
     onChangeMoniLevel,
     voxDelayKnob,
     onChangeVoxDelayKnob,
+    voxGainKnob,
+    onChangeVoxGainKnob,
     micGain,
     onChangeMicGain,
     txPower,
@@ -431,13 +439,14 @@ export function RadioPanel(props: RadioPanelProps) {
         <PanelButton label="NB" active={rx.nbLevel > 0} onClick={onToggleNb} title="Noise blanker" />
         <PanelButton label="NR" active={rx.nrLevel > 0} onClick={onToggleNr} title="Noise reduction" />
         <PanelButton label="APF" active={rx.apfEnabled} onClick={onToggleApf} title="Audio peak filter (CW)" />
+        <PanelButton label="NOTCH" active={rx.notchDepth > 0} onClick={onToggleNotch} title="Manual notch filter" />
         <PanelButton label="R.FLT" onClick={onCycleFilterWidth} title={`Roofing filter: ${filterLabel}`} />
         <PanelButton label="CMP" active={compEnabled} onClick={onToggleComp} title="Speech processor" />
         <PanelButton label="DNR" active={rx.dnrEnabled} onClick={onToggleDnr} title="Digital noise reduction" />
         <div className="agc-switch agc-switch--inline">
           <div className="agc-switch__label">AGC</div>
           <div className="agc-switch__options">
-            {(["OFF", "FAST", "SLOW"] as AgcMode[]).map((m) => (
+            {(["OFF", "FAST", "MID", "SLOW"] as AgcMode[]).map((m) => (
               <PanelButton
                 key={m}
                 label={m}
@@ -504,6 +513,7 @@ export function RadioPanel(props: RadioPanelProps) {
             <Knob label="PROC" value={procLevel} min={0} max={10} onChange={onChangeProcLevel} />
             <Knob label="MONI" value={moniLevel} min={0} max={10} onChange={onChangeMoniLevel} />
             <Knob label="VOX DELAY" value={voxDelayKnob} min={0} max={10} onChange={onChangeVoxDelayKnob} />
+            <Knob size="small" label="VOX GAIN" value={voxGainKnob} min={0} max={10} onChange={onChangeVoxGainKnob} title="VOX sensitivity -- higher is more sensitive" />
           </div>
           <div className="panel__antenna-section">
             <div className="button-group__label">ANTENNA</div>
@@ -629,7 +639,14 @@ export function RadioPanel(props: RadioPanelProps) {
               <PanelButton small label="MW" active={memScanActive} onClick={onToggleMemScan} title="Memory scan" />
             </div>
             <div className="vfo-select">
-              <PanelButton small label="A/B" active={activeVfo === "B"} onClick={() => onSelectVfo(activeVfo === "A" ? "B" : "A")} />
+              <PanelButton
+                small
+                label="A/B"
+                active={activeVfo === "B"}
+                onClick={() => onSelectVfo(activeVfo === "A" ? "B" : "A")}
+                onHold={onEqualizeVfos}
+                title="Switch VFO A/B -- hold to copy this VFO onto the other"
+              />
               <PanelButton small label="A⇄B" onClick={onSwapVfos} title="Swap VFO A and B" />
               <PanelButton small label="SPLIT" active={split} onClick={onToggleSplit} />
               <PanelButton small label="VFO/M" active={vfoMMode === "M"} onClick={onToggleVfoM} />
