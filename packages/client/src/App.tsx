@@ -176,6 +176,7 @@ export function App() {
   const transmitting = mox || pttHeld || (vox && voxActive);
 
   const activeVfoState = activeVfo === "A" ? vfoA : vfoB;
+  const otherVfo = activeVfo === "A" ? vfoB : vfoA;
   const setActiveVfoState = useCallback(
     (updater: VfoState | ((prev: VfoState) => VfoState)) => {
       if (activeVfo === "A") setVfoA(updater);
@@ -183,10 +184,27 @@ export function App() {
     },
     [activeVfo],
   );
+  const setOtherVfoState = useCallback(
+    (updater: VfoState | ((prev: VfoState) => VfoState)) => {
+      if (activeVfo === "A") setVfoB(updater);
+      else setVfoA(updater);
+    },
+    [activeVfo],
+  );
   const band = findBand(activeVfoState.freqKHz);
   const listenFreqKHz = activeVfoState.freqKHz + (ritEnabled ? offsetHz / 1000 : 0);
-  const txFreqBase = split ? (activeVfo === "A" ? vfoB.freqKHz : vfoA.freqKHz) : activeVfoState.freqKHz;
+  const txFreqBase = split ? otherVfo.freqKHz : activeVfoState.freqKHz;
   const txFreqKHz = txFreqBase + (xitEnabled ? offsetHz / 1000 : 0);
+  // The other VFO's offset from the active one, purely for SPLIT's shift
+  // knob/readout -- 0 whenever SPLIT is off, since there's no TX/RX
+  // relationship to show.
+  const splitShiftHz = split ? (otherVfo.freqKHz - activeVfoState.freqKHz) * 1000 : 0;
+  const onChangeSplitShiftHz = useCallback(
+    (hz: number) => {
+      setOtherVfoState((prev) => ({ ...prev, freqKHz: activeVfoState.freqKHz + hz / 1000 }));
+    },
+    [activeVfoState.freqKHz, setOtherVfoState],
+  );
 
   const logEvent = useCallback((message: string) => {
     setEvents((prev) => [message, ...prev].slice(0, MAX_EVENTS));
@@ -515,9 +533,15 @@ export function App() {
   const onTuneKnob = useCallback(
     (freqKHz: number) => {
       if (vfoLocked) return;
+      // The main dial (and its equivalents -- waterfall click-to-tune,
+      // direct keypad entry) only tunes the working VFO when VFO mode is
+      // selected; in Memory mode the dial browses memory channels instead
+      // (see stepFreq below), so it shouldn't silently overwrite whichever
+      // memory is currently displayed.
+      if (vfoMMode === "M") return;
       setActiveVfoState((prev) => ({ ...prev, freqKHz }));
     },
-    [vfoLocked, setActiveVfoState],
+    [vfoLocked, vfoMMode, setActiveVfoState],
   );
 
   const stepFreq = useCallback(
@@ -817,6 +841,8 @@ export function App() {
       onToggleXit={() => setXitEnabled((s) => !s)}
       offsetHz={offsetHz}
       onChangeOffsetHz={(hz) => setOffsetHz(Math.round(hz / 10) * 10)}
+      splitShiftHz={splitShiftHz}
+      onChangeSplitShiftHz={(hz) => onChangeSplitShiftHz(Math.round(hz / 10) * 10)}
       onClear={() => {
         setOffsetHz(0);
         beep(400, 60);
@@ -829,7 +855,15 @@ export function App() {
       vfoMMode={vfoMMode}
       onToggleVfoM={() => setVfoMMode((m) => (m === "VFO" ? "M" : "VFO"))}
       memIndex={memIndex}
-      onMemToVfo={() => cycleMemory(1)}
+      onMemToVfo={() => {
+        // Recalls whichever memory is currently selected -- it must not
+        // itself pick a different memory (that's what the dial/step
+        // buttons are for in Memory mode); it just copies the one already
+        // shown into the working VFO and switches back to VFO mode, same
+        // as a real rig's M>VFO.
+        onMemoryRecall(memIndex);
+        setVfoMMode("VFO");
+      }}
       onMemIn={onMemIn}
       memory={memory}
       onMemoryProgram={onMemoryProgram}

@@ -72,6 +72,23 @@ function makeSoftClipCurve(amount: number): Float32Array {
   return curve;
 }
 
+/**
+ * A plain tanh curve: transparent (≈identity) for quiet audio, gracefully
+ * saturating instead of hard-clipping for anything loud. Sits permanently
+ * at the very end of the RX chain as a safety net -- most usefully, it's
+ * what lets AGC-off use a much larger fixed makeup gain (see below) without
+ * a strong signal turning into harsh digital clipping.
+ */
+function makeTanhLimiterCurve(): Float32Array {
+  const n = 1024;
+  const curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    curve[i] = Math.tanh(x);
+  }
+  return curve;
+}
+
 export class AudioEngine {
   private context: AudioContext | null = null;
   private captureNode: AudioWorkletNode | null = null;
@@ -91,6 +108,7 @@ export class AudioEngine {
   private afGainNode: GainNode | null = null;
   private squelchGate: GainNode | null = null;
   private outputMakeupGain: GainNode | null = null;
+  private outputLimiter: WaveShaperNode | null = null;
   private rxAnalyser: AnalyserNode | null = null;
 
   // Transmit chain nodes.
@@ -167,10 +185,17 @@ export class AudioEngine {
     // ambient noise floor becomes audible without the loudest realistic
     // signals clipping (see AGC settings above for the full reasoning).
     this.outputMakeupGain = new GainNode(context, { gain: 65 });
-    // Tapped after everything else (including the squelch gate), so the
-    // level it reports is exactly what's actually audible right now --
-    // real signal, real interference, correctly silent when squelched --
-    // rather than a synthetic/estimated value.
+    // A permanent safety net at the very end of the chain: transparent at
+    // normal listening levels, but saturates gracefully instead of hard-
+    // clipping if the gain stages above ever push a peak past ±1 -- most
+    // importantly, this is what lets AGC-off use a fixed makeup gain large
+    // enough to actually hear weak signals without a strong one turning
+    // into harsh digital clipping (see AGC-off gain below).
+    this.outputLimiter = new WaveShaperNode(context, { curve: makeTanhLimiterCurve(), oversample: "2x" });
+    // Tapped after everything else (including the squelch gate and output
+    // limiter), so the level it reports is exactly what's actually audible
+    // right now -- real signal, real interference, correctly silent when
+    // squelched -- rather than a synthetic/estimated value.
     this.rxAnalyser = new AnalyserNode(context, { fftSize: 512 });
 
     this.playbackNode
@@ -185,8 +210,9 @@ export class AudioEngine {
       .connect(this.afGainNode)
       .connect(this.squelchGate)
       .connect(this.outputMakeupGain)
+      .connect(this.outputLimiter)
       .connect(context.destination);
-    this.outputMakeupGain.connect(this.rxAnalyser);
+    this.outputLimiter.connect(this.rxAnalyser);
 
     this.applyReceiveParams();
   }
@@ -384,11 +410,15 @@ export class AudioEngine {
       // The 65x makeup gain below exists to compensate for AGC's ~3:1
       // compression of the ~55dB propagation range -- with AGC off there's
       // no compression to compensate for, so that same fixed gain would
-      // massively overdrive even a moderate noise floor straight into heavy
-      // clipping. A real radio with AGC off requires manual RF/AF gain
-      // riding too; this just picks a starting point that isn't immediately
-      // distorted by default.
-      if (this.outputMakeupGain) this.outputMakeupGain.gain.value = 4;
+      // overdrive a strong signal hard. But too conservative a value here
+      // left weak/moderate signals effectively silent (a real radio with
+      // AGC off does need manual RF/AF gain riding, but should still be
+      // audible at the default settings first). The output limiter above
+      // now saturates gracefully instead of hard-clipping, so this can be
+      // sized for weak-signal audibility -- a strong signal will sound
+      // loud and compressed/overloaded with AGC off, which is realistic,
+      // rather than the whole band being silent.
+      if (this.outputMakeupGain) this.outputMakeupGain.gain.value = 20;
     } else {
       if (this.outputMakeupGain) this.outputMakeupGain.gain.value = 65;
       // The propagation model's dB scale spans a huge range: from the
