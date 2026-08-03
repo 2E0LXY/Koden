@@ -382,7 +382,7 @@ export function RadioPanel(props: RadioPanelProps) {
               >
                 {CONNECTION_LABELS[connectionStatus] ?? connectionStatus.toUpperCase()}
               </span>
-              <SMeter signalDb={signalDb} noiseFloorDb={noiseFloorDb} getLiveLevel={getLiveLevel} />
+              <SMeter signalDb={signalDb} getLiveLevel={getLiveLevel} />
               <SwrBar swr={swr} tuning={tunerActive} />
               <CompMeter enabled={compEnabled} level={procLevel} />
               <WattMeter watts={txPower * txEnvelope} transmitting={transmitting} />

@@ -6,6 +6,7 @@ import {
   type Mode,
   type ServerMessage,
   antennaById,
+  antennaGainDb,
   bandById,
   daylightFactor,
   nearestBand,
@@ -16,7 +17,8 @@ import type { Station } from "../stationManager.js";
 import { StationManager } from "../stationManager.js";
 import { PropagationEngine, passbandKHz, type PropagationResult } from "./propagation.js";
 import { SporadicEEngine } from "./sporadicE.js";
-import { BandNoiseGenerator, dbToLinear, modeNoiseGainDb } from "./noise.js";
+import { BandNoiseGenerator, dbToLinear, hashFrac, modeNoiseGainDb } from "./noise.js";
+import { qrmLevelDb, qrmSpursForBand } from "./qrm.js";
 import {
   MultipathFilter,
   SsbFrequencyShifter,
@@ -62,6 +64,10 @@ export class MixerEngine {
   private multipathByPair = new Map<string, MultipathFilter>();
   private ssbShifterByPair = new Map<string, SsbFrequencyShifter>();
   private beaconOscByStation = new Map<string, BeaconToneOscillator>();
+  /** One oscillator per (station, band, spur index), so its phase stays continuous while a listener sits tuned near a spur. */
+  private qrmOscByStation = new Map<string, Map<string, BeaconToneOscillator>>();
+  /** QRM spurs are always "keyed" -- a steady carrier, not Morse -- so every listener shares this same constant envelope. */
+  private readonly qrmEnvelope = new Float32Array(FRAME_SAMPLES).fill(1);
   private tickCount = 0;
   private beacon = new MorseBeacon("KODEN BEACON", 10, 7);
   private parrot: ParrotEcho;
@@ -78,6 +84,7 @@ export class MixerEngine {
     this.propagation.forget(id);
     this.noiseByStation.delete(id);
     this.txBandwidthByStation.delete(id);
+    this.qrmOscByStation.delete(id);
     for (const key of [...this.multipathByPair.keys()]) {
       if (key.startsWith(`${id}:`) || key.endsWith(`:${id}`)) this.multipathByPair.delete(key);
     }
@@ -119,6 +126,19 @@ export class MixerEngine {
     if (existing) return existing;
     const osc = new BeaconToneOscillator();
     this.beaconOscByStation.set(rx.id, osc);
+    return osc;
+  }
+
+  private getQrmOscillator(rx: Station, spurKey: string): BeaconToneOscillator {
+    let byKey = this.qrmOscByStation.get(rx.id);
+    if (!byKey) {
+      byKey = new Map();
+      this.qrmOscByStation.set(rx.id, byKey);
+    }
+    const existing = byKey.get(spurKey);
+    if (existing) return existing;
+    const osc = new BeaconToneOscillator();
+    byKey.set(spurKey, osc);
     return osc;
   }
 
@@ -231,6 +251,21 @@ export class MixerEngine {
         peakSignalDb = Math.max(peakSignalDb, PARROT_SIGNAL_DB);
         for (let i = 0; i < output.length; i++) output[i] += parrotFrame[i] * parrotGain;
       }
+
+      // Fixed-frequency QRM/birdie spurs: unlike the ambient band noise
+      // floor (uniform across the whole band), these sit at real dial
+      // frequencies, so tuning toward or away from one moves the S-meter
+      // and waterfall the way a real birdie or bleed-through carrier would.
+      qrmSpursForBand(rxBand).forEach((spurFreqKHz, i) => {
+        const levelDb = qrmLevelDb(spurFreqKHz, rx.freqKHz);
+        if (levelDb < AUDIBLE_THRESHOLD_DB) return;
+        audibleIds.push(`qrm:${rxBand.id}:${i}`);
+        peakSignalDb = Math.max(peakSignalDb, levelDb);
+        const toneHz = Math.abs((rx.freqKHz - spurFreqKHz) * 1000);
+        const qrmFrame = this.getQrmOscillator(rx, `${rxBand.id}:${i}`).renderTone(this.qrmEnvelope, this.sampleRate, toneHz);
+        const qrmGain = dbToLinear(Math.min(levelDb, 0));
+        for (let j = 0; j < output.length; j++) output[j] += qrmFrame[j] * qrmGain;
+      });
 
       // FM has a real "capture effect": the discriminator locks onto
       // whichever signal is strongest and suppresses the rest entirely,
@@ -348,12 +383,25 @@ export class MixerEngine {
       const crackleRateMultiplier = 1 + rxBand.daytimeAbsorption * (1 - rxDaylight) * 0.8;
 
       const noiseGen = this.getNoiseGenerator(rx, rxBand);
-      const antennaNoiseAdjustDb = antennaById(rx.antenna)?.noiseFloorAdjustDb ?? 0;
+      const rxAntennaMeta = antennaById(rx.antenna);
+      const antennaNoiseAdjustDb = rxAntennaMeta?.noiseFloorAdjustDb ?? 0;
+      // A directional beam can partially null background QRM/static by
+      // pointing away from wherever it's mostly coming from, the way real
+      // hams "rotate off the noise." Each band gets its own fixed noise
+      // bearing so it's consistent as you swing the beam back and forth.
+      // Omnidirectional antennas can't discriminate by heading at all --
+      // antennaGainDb returns their flat gain regardless of bearing, so
+      // this nets to exactly 0 for them automatically.
+      const noiseBearingDeg = hashFrac(`noise-bearing:${rxBand.id}`) * 360;
+      const directionalNoiseDb = rxAntennaMeta
+        ? Math.max(-8, antennaGainDb(rxAntennaMeta, rx.headingDeg, noiseBearingDeg) - rxAntennaMeta.gainDbi)
+        : 0;
       const effectiveNoiseFloorDb =
         rxBand.baseNoiseFloorDb +
         modeNoiseGainDb(rx.mode, rx.filterWidth) +
         nightQrnBoostDb +
-        antennaNoiseAdjustDb;
+        antennaNoiseAdjustDb +
+        directionalNoiseDb;
       const noiseFrame = noiseGen.generate(FRAME_SAMPLES, effectiveNoiseFloorDb, crackleRateMultiplier);
 
       // FM's capture effect: once a signal is comfortably above the noise

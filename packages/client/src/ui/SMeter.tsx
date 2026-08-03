@@ -3,8 +3,8 @@ import { MeterBar } from "./MeterBar.js";
 
 interface SMeterProps {
   signalDb: number;
-  /** The band's current ambient noise floor (same reference frame as signalDb). */
-  noiseFloorDb: number;
+  minDb?: number;
+  maxDb?: number;
   /**
    * Live receive audio level (0..1 RMS/peak), read directly off actual
    * playback. Blended in on top of the server-reported signalDb as a small,
@@ -34,15 +34,20 @@ function sReadout(normalized: number): string {
   return `S9+${overDb}`;
 }
 
-export function SMeter({ signalDb, noiseFloorDb, getLiveLevel }: SMeterProps) {
-  // Matches the waterfall's own-signal bump: read relative to the band's
-  // actual noise floor (not a fixed absolute dB scale), so an empty
-  // frequency reads near the bottom of the scale and the two displays never
-  // disagree about whether a real signal is present.
+// Calibrated to the propagation/noise model's actual achievable range, not
+// an arbitrary guess: the quietest realistic condition (best band/mode/
+// antenna/heading combination) bottoms out around -77dB, and the strongest
+// realistic signal (close range, full power, aligned beams, a lucky
+// meteor-scatter burst) tops out around +50dB. A real S-meter reads
+// absolute received power -- including the bare noise floor -- so this
+// reading properly moves with band, mode/filter, day/night, and antenna
+// heading even with nothing "audible" tuned in, the same way a real one
+// would as you rotate a beam off a noisy direction.
+export function SMeter({ signalDb, minDb = -80, maxDb = 50, getLiveLevel }: SMeterProps) {
   const baseline = useMemo(() => {
-    const t = (signalDb - noiseFloorDb) / 40;
+    const t = (signalDb - minDb) / (maxDb - minDb);
     return Math.max(0, Math.min(1, t));
-  }, [signalDb, noiseFloorDb]);
+  }, [signalDb, minDb, maxDb]);
 
   const [liveBoost, setLiveBoost] = useState(0);
   const getLiveLevelRef = useRef(getLiveLevel);
