@@ -41,7 +41,10 @@ function rfSensitivityAdjustDb(rfGain: number, attEnabled: boolean, ipoEnabled: 
 
 const WS_URL = import.meta.env.VITE_SERVER_WS_URL ?? "ws://localhost:8787/ws";
 const MAX_EVENTS = 12;
-const VOX_THRESHOLD = 0.02;
+/** 0..10 VOX GAIN knob -> trigger threshold: higher gain = more sensitive (lower threshold), matching the real radio's VOX GAIN parameter. */
+function voxThreshold(voxGainKnob: number): number {
+  return 0.06 - (voxGainKnob / 10) * 0.055;
+}
 const SPEAKER_SELECTION_SUPPORTED =
   typeof AudioContext !== "undefined" && "setSinkId" in AudioContext.prototype;
 
@@ -122,6 +125,7 @@ export function App() {
   const [vox, setVox] = useState(false);
   const [voxActive, setVoxActive] = useState(false);
   const [voxDelayKnob, setVoxDelayKnob] = useState(4); // -> ~800ms
+  const [voxGainKnob, setVoxGainKnob] = useState(5);
   const [txModLevel, setTxModLevel] = useState(0);
 
   const [rx, setRx] = useState<ReceiveParams>(DEFAULT_RX);
@@ -192,6 +196,15 @@ export function App() {
     [activeVfo],
   );
   const band = findBand(activeVfoState.freqKHz);
+  // Remembers the active VFO's frequency/mode per band -- a simplified,
+  // single-register version of the real radio's 3-deep band stacking
+  // registers -- so reselecting a band later returns to where you left
+  // off instead of always resetting to the band edge.
+  const [bandMemory, setBandMemory] = useState<Record<string, VfoState>>({});
+  useEffect(() => {
+    if (!band) return;
+    setBandMemory((prev) => ({ ...prev, [band.id]: activeVfoState }));
+  }, [band, activeVfoState]);
   const listenFreqKHz = activeVfoState.freqKHz + (ritEnabled ? offsetHz / 1000 : 0);
   const txFreqBase = split ? otherVfo.freqKHz : activeVfoState.freqKHz;
   const txFreqKHz = txFreqBase + (xitEnabled ? offsetHz / 1000 : 0);
@@ -402,10 +415,11 @@ export function App() {
       return;
     }
     const hangMs = 100 + (voxDelayKnob / 10) * 1900;
+    const threshold = voxThreshold(voxGainKnob);
     let hangTimeout: number | undefined;
     const interval = window.setInterval(() => {
       const level = audioEngineRef.current?.getMicLevel() ?? 0;
-      if (level > VOX_THRESHOLD) {
+      if (level > threshold) {
         setVoxActive(true);
         if (hangTimeout) {
           window.clearTimeout(hangTimeout);
@@ -419,7 +433,7 @@ export function App() {
       window.clearInterval(interval);
       if (hangTimeout) window.clearTimeout(hangTimeout);
     };
-  }, [vox, voxDelayKnob]);
+  }, [vox, voxDelayKnob, voxGainKnob]);
 
   // Live TX modulation envelope (real mic level, not a fabricated wiggle) --
   // drives the WATT meter so it swings with actual voice peaks like a real
@@ -574,14 +588,16 @@ export function App() {
 
   const onBandSelect = useCallback(
     (b: Band) => {
-      setActiveVfoState({ freqKHz: b.rangeKHz[0] + 50, mode: b.defaultMode });
-      if (b.defaultMode !== "FM") setRx((prev) => ({ ...prev, agcMode: defaultAgcForMode(b.defaultMode) }));
+      const remembered = bandMemory[b.id];
+      setActiveVfoState(remembered ?? { freqKHz: b.rangeKHz[0] + 50, mode: b.defaultMode });
+      const mode = remembered?.mode ?? b.defaultMode;
+      if (mode !== "FM") setRx((prev) => ({ ...prev, agcMode: defaultAgcForMode(mode) }));
       // A real antenna's match is frequency-dependent, so hopping bands
       // knocks the SWR back out of tune until the tuner is re-run.
       setSwr(1.8 + Math.random() * 2.7);
       beep(900, 70);
     },
-    [setActiveVfoState],
+    [setActiveVfoState, bandMemory],
   );
 
   const toggleMox = useCallback(() => {
@@ -820,6 +836,13 @@ export function App() {
         setVfoB(vfoA);
         beep(600, 80);
       }}
+      onEqualizeVfos={() => {
+        // Copies the displayed VFO's frequency/mode onto the other one,
+        // same as holding A/B on a real rig -- two short beeps confirm it.
+        setOtherVfoState(activeVfoState);
+        beep(700, 60);
+        window.setTimeout(() => beep(700, 60), 120);
+      }}
       split={split}
       onToggleSplit={() => {
         setSplit((s) => !s);
@@ -885,6 +908,7 @@ export function App() {
       onToggleIpo={() => updateRx({ ipoEnabled: !rx.ipoEnabled })}
       onToggleApf={() => updateRx({ apfEnabled: !rx.apfEnabled })}
       onToggleDnr={() => updateRx({ dnrEnabled: !rx.dnrEnabled })}
+      onToggleNotch={() => updateRx({ notchDepth: rx.notchDepth > 0 ? 0 : 8 })}
       compEnabled={compEnabled}
       onToggleComp={() => setCompEnabled((s) => !s)}
       procLevel={procLevel}
@@ -893,6 +917,8 @@ export function App() {
       onChangeMoniLevel={setMoniLevel}
       voxDelayKnob={voxDelayKnob}
       onChangeVoxDelayKnob={setVoxDelayKnob}
+      voxGainKnob={voxGainKnob}
+      onChangeVoxGainKnob={setVoxGainKnob}
       micGain={micGain}
       onChangeMicGain={setMicGain}
       txPower={txPower}

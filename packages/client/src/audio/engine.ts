@@ -2,7 +2,7 @@ import { SAMPLE_RATE } from "@koden/shared";
 
 const WORKLET_URL = new URL("./pcm-worklet.js", import.meta.url);
 
-export type AgcMode = "OFF" | "FAST" | "SLOW";
+export type AgcMode = "OFF" | "FAST" | "MID" | "SLOW";
 
 export interface ReceiveParams {
   /** 0..10 master volume. */
@@ -435,9 +435,15 @@ export class AudioEngine {
       // how quickly they react and recover, same as a real radio's AGC.
       this.agcCompressor.threshold.value = -60;
       this.agcCompressor.ratio.value = 3;
-      this.agcCompressor.knee.value = p.agcMode === "FAST" ? 10 : 16;
-      this.agcCompressor.attack.value = p.agcMode === "FAST" ? 0.008 : 0.03;
-      this.agcCompressor.release.value = p.agcMode === "FAST" ? 0.25 : 1.4;
+      // Three real time constants (roughly matching a real radio's
+      // FAST/MID/SLOW AGC decay ratios), not just two -- MID sits between
+      // FAST's snappy recovery and SLOW's smoother one.
+      const agcConstants = { FAST: { knee: 10, attack: 0.008, release: 0.25 },
+        MID: { knee: 13, attack: 0.015, release: 0.6 },
+        SLOW: { knee: 16, attack: 0.03, release: 1.4 } }[p.agcMode];
+      this.agcCompressor.knee.value = agcConstants.knee;
+      this.agcCompressor.attack.value = agcConstants.attack;
+      this.agcCompressor.release.value = agcConstants.release;
     }
 
     const balance = 0.5 + p.afRfBalance / 10;
