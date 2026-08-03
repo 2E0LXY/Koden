@@ -453,6 +453,24 @@ export class AudioEngine {
     this.afGainNode.gain.value = Math.max(0, p.afGain / 10) * 1.5 * balance;
   }
 
+  /**
+   * XFC (transmit frequency check): while held, the manual specifies NR,
+   * Notch, and Twin PBT are all temporarily suspended, so none of them
+   * color your judgment of how clear the frequency you're about to
+   * transmit on actually is. Restored to the real settings on release.
+   */
+  setXfcBypass(active: boolean): void {
+    if (!this.notchFilter || !this.nrFilter || !this.ifShiftFilter) return;
+    if (active) {
+      this.notchFilter.Q.value = 0.01;
+      this.nrFilter.frequency.value = 7900;
+      this.ifShiftFilter.frequency.value = 1500;
+      this.ifShiftFilter.Q.value = 0.4;
+    } else {
+      this.applyReceiveParams();
+    }
+  }
+
   setSquelchOpen(open: boolean): void {
     if (!this.squelchGate || !this.context) return;
     const target = open ? 1 : 0;

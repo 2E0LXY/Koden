@@ -88,6 +88,7 @@ interface RadioPanelProps {
   onSetTuneStep: (step: TuneStep) => void;
   onStepUp: () => void;
   onStepDown: () => void;
+  onAutoTune: () => void;
 
   ritEnabled: boolean;
   onToggleRit: () => void;
@@ -99,6 +100,16 @@ interface RadioPanelProps {
   /** TX-vs-RX shift when SPLIT is on (Hz, +above/-below the RX VFO). */
   splitShiftHz: number;
   onChangeSplitShiftHz: (hz: number) => void;
+  /** Held to monitor the actual transmit frequency (XFC). */
+  xfcHeld: boolean;
+  onXfcDown: () => void;
+  onXfcUp: () => void;
+  /** Twin PBT's two raw dial positions (Hz) -- shift/narrowing are derived from these. */
+  pbt1Hz: number;
+  pbt2Hz: number;
+  onChangePbt1Hz: (hz: number) => void;
+  onChangePbt2Hz: (hz: number) => void;
+  onClearPbt: () => void;
 
   filterWidth: FilterWidth;
   onCycleFilterWidth: () => void;
@@ -227,6 +238,7 @@ export function RadioPanel(props: RadioPanelProps) {
     onSetTuneStep,
     onStepUp,
     onStepDown,
+    onAutoTune,
     ritEnabled,
     onToggleRit,
     xitEnabled,
@@ -236,6 +248,14 @@ export function RadioPanel(props: RadioPanelProps) {
     onClear,
     splitShiftHz,
     onChangeSplitShiftHz,
+    xfcHeld,
+    onXfcDown,
+    onXfcUp,
+    pbt1Hz,
+    pbt2Hz,
+    onChangePbt1Hz,
+    onChangePbt2Hz,
+    onClearPbt,
     filterWidth,
     onCycleFilterWidth,
     vfoMMode,
@@ -567,6 +587,12 @@ export function RadioPanel(props: RadioPanelProps) {
                 <PanelButton label="▼" small onClick={onStepDown} />
                 <PanelButton label="FINE" active={tuneStep === "FINE"} onClick={() => onSetTuneStep("FINE")} />
                 <PanelButton label="COARSE" active={tuneStep === "COARSE"} onClick={() => onSetTuneStep("COARSE")} />
+                <PanelButton
+                  label="A.TUNE"
+                  onClick={onAutoTune}
+                  disabled={activeVfoState.mode !== "CW"}
+                  title="Auto-tune to a nearby CW signal (±500Hz, CW mode only)"
+                />
               </div>
             </div>
 
@@ -655,27 +681,65 @@ export function RadioPanel(props: RadioPanelProps) {
 
           <div className="knob-row">
             <Knob
-              label="TWIN PBT"
+              label="IF WIDTH"
               value={rx.width}
               min={0}
               max={10}
               onChange={(v) => onUpdateRx({ width: v })}
               onReset={() => onUpdateRx({ width: 10 })}
+              title="Receive filter bandwidth"
             />
             <Knob label="NOTCH" value={rx.notchFreqHz} min={300} max={3000} onChange={(v) => onUpdateRx({ notchFreqHz: v })} />
-            <Knob size="small" label="PBT" value={rx.pbtQ} min={0} max={10} onChange={(v) => onUpdateRx({ pbtQ: v })} />
             <Knob size="small" label="NOTCH WIDTH" value={rx.notchWidth} min={0} max={10} onChange={(v) => onUpdateRx({ notchWidth: v })} />
+          </div>
+
+          <div className="button-group">
+            <div className="button-group__label">TWIN PBT</div>
+            <Knob
+              size="small"
+              label="PBT1"
+              value={pbt1Hz}
+              min={-1500}
+              max={1500}
+              format={(v) => `${v >= 0 ? "+" : ""}${Math.round(v)}`}
+              onChange={onChangePbt1Hz}
+              onReset={onClearPbt}
+              title="Twin PBT inner ring -- same direction as PBT2 shifts the passband, opposite direction narrows it"
+            />
+            <Knob
+              size="small"
+              label="PBT2"
+              value={pbt2Hz}
+              min={-1500}
+              max={1500}
+              format={(v) => `${v >= 0 ? "+" : ""}${Math.round(v)}`}
+              onChange={onChangePbt2Hz}
+              onReset={onClearPbt}
+              title="Twin PBT outer ring -- same direction as PBT1 shifts the passband, opposite direction narrows it"
+            />
           </div>
 
           <div className="button-group">
             <div className="button-group__label">RIT/XIT</div>
             <PanelButton small label="RIT" active={ritEnabled} onClick={onToggleRit} />
             <PanelButton small label="XIT" active={xitEnabled} onClick={onToggleXit} />
+            <button
+              className={`panel-btn panel-btn--small ${xfcHeld ? "panel-btn--active" : ""}`}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                click();
+                onXfcDown();
+              }}
+              onPointerUp={onXfcUp}
+              onPointerLeave={() => xfcHeld && onXfcUp()}
+              title="Hold to monitor the actual transmit frequency (suspends RIT/XIT offset, NR, Notch and Twin PBT)"
+            >
+              XFC
+            </button>
           </div>
 
           <div className="knob-row">
             <Knob size="small" label="OFFSET" value={offsetHz} min={-9990} max={9990} onChange={onChangeOffsetHz} />
-            <Knob label="IF SHIFT" value={rx.ifShiftHz} min={-1500} max={1500} onChange={(v) => onUpdateRx({ ifShiftHz: v })} />
             <Knob label="AF⇒RF" value={rx.afRfBalance} min={0} max={10} onChange={(v) => onUpdateRx({ afRfBalance: v })} />
           </div>
 
