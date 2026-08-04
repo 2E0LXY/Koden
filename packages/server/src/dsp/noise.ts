@@ -312,6 +312,40 @@ export class IgnitionBuzz {
 }
 
 /**
+ * VDSL/broadband-over-powerline "quasi-white" noise -- the RSGB's own noise
+ * leaflet specifically calls this out as a distinct, now-common signature:
+ * unlike SmpsHash's rough buzzy harmonics, this reads as a *smoother*,
+ * simply-elevated noise floor (the leaflet's own diagnostic is "the S-meter
+ * reads higher than expected but the noise sounds smoother than it should").
+ * Modeled as gently low-passed pink noise -- no discrete harmonic
+ * structure at all -- with a slow presence wobble. Only some receive
+ * locations happen to sit near a VDSL modem or powerline adaptor, so this
+ * is present in a fraction of instances, not universally.
+ */
+export class VdslHum {
+  private pink = new PinkNoise();
+  private lowpass: Biquad;
+  private activityPhase = Math.random() * Math.PI * 2;
+
+  constructor(private sampleRate: number, private intensity: number) {
+    this.lowpass = Biquad.lowpass(sampleRate, 2200, 0.7);
+  }
+
+  fillAdd(out: Float32Array): void {
+    const scratch = new Float32Array(out.length);
+    const activityStep = (2 * Math.PI * 0.003) / this.sampleRate; // ~5.5 min period
+    for (let i = 0; i < out.length; i++) {
+      this.activityPhase += activityStep;
+      if (this.activityPhase > Math.PI * 2) this.activityPhase -= Math.PI * 2;
+      const activity = 0.85 + 0.15 * (0.5 + 0.5 * Math.sin(this.activityPhase));
+      scratch[i] = this.pink.next() * activity;
+    }
+    this.lowpass.processInPlace(scratch);
+    for (let i = 0; i < out.length; i++) out[i] += scratch[i] * this.intensity;
+  }
+}
+
+/**
  * Switch-mode power supply "hash": the rough, buzzy harmonic noise thrown
  * off by cheap SMPS/LED-driver/charger switching regulators. Unlike
  * atmospheric static (worst on the low bands), this gets *more* noticeable
@@ -462,6 +496,7 @@ export class BandNoiseGenerator {
   private whistlePresencePhase = Math.random() * Math.PI * 2;
   private ignition: IgnitionBuzz;
   private smpsHash: SmpsHash;
+  private vdslHum: VdslHum | null = null;
   private woodpecker: OthrWoodpecker | null = null;
   private brightener: Biquad | null = null;
   private shaper: Biquad | null = null;
@@ -511,6 +546,14 @@ export class BandNoiseGenerator {
     const highBandBoost = Math.max(0, Math.min(1, (band.rangeKHz[0] - 14000) / 14000));
     const smpsSeverity = 0.7 + Math.random() * 0.6;
     this.smpsHash = new SmpsHash(sampleRate, (0.4 + highBandBoost * 2.0) * smpsSeverity);
+
+    // VDSL/powerline-adaptor noise is a local-installation coincidence
+    // (some receive locations are near one, most aren't), not a band or
+    // atmospheric characteristic, so it's gated purely by chance rather
+    // than band position.
+    if (Math.random() < 0.4) {
+      this.vdslHum = new VdslHum(sampleRate, 1.0 + Math.random() * 1.4);
+    }
 
     // Over-the-horizon radar sweeps are specific to 20m/15m, not a general
     // band characteristic -- most connections on those bands won't catch an
@@ -619,6 +662,7 @@ export class BandNoiseGenerator {
     this.crackle.fillAdd(out);
     this.ignition.fillAdd(out);
     this.smpsHash.fillAdd(out);
+    if (this.vdslHum) this.vdslHum.fillAdd(out);
     if (this.woodpecker) this.woodpecker.fillAdd(out);
     for (const b of this.birdies) b.fillAdd(out);
     if (this.heterodyne) this.heterodyne.fillAdd(out);

@@ -77,6 +77,7 @@ const DEFAULT_RX: ReceiveParams = {
   notchDepth: 0,
   notchFreqHz: 1000,
   notchWidth: 5,
+  notchMode: "off",
   ifShiftHz: 0,
   pbtQ: 5,
   width: 10,
@@ -1008,7 +1009,11 @@ export function App() {
         onToggleIpo={() => updateRx({ ipoEnabled: !rx.ipoEnabled })}
         onToggleApf={() => updateRx({ apfEnabled: !rx.apfEnabled })}
         onToggleDnr={() => updateRx({ dnrEnabled: !rx.dnrEnabled })}
-        onToggleNotch={() => updateRx({ notchDepth: rx.notchDepth > 0 ? 0 : 8 })}
+        onCycleNotchMode={() => {
+          const next = rx.notchMode === "off" ? "auto" : rx.notchMode === "auto" ? "manual" : "off";
+          updateRx({ notchMode: next, notchDepth: next === "manual" ? 8 : 0 });
+          beep(next === "off" ? 500 : 700, 50);
+        }}
         onCycleNotchWidth={() => {
           // WIDE cuts a broader chunk of spectrum (easier to find/silence
           // interference with), NAR cuts only a sliver (less collateral

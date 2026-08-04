@@ -18,6 +18,16 @@ import { bufferToInt16Array } from "./dsp/pcm.js";
 import { getSolarConditions, startSolarDataRefresh } from "./dsp/solar.js";
 import { BEACON_CALLSIGN, BEACON_FREQ_KHZ, BEACON_GRID, BEACON_ID } from "./dsp/beacon.js";
 import { PARROT_CALLSIGN, PARROT_FREQ_KHZ, PARROT_GRID, PARROT_ID } from "./dsp/parrot.js";
+import {
+  TIME_STATION_CALLSIGN,
+  TIME_STATION_FREQ_KHZ,
+  TIME_STATION_GRID,
+  TIME_STATION_ID,
+  VOLMET_CALLSIGN,
+  VOLMET_FREQ_KHZ,
+  VOLMET_GRID,
+  VOLMET_ID,
+} from "./dsp/utilityStations.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const TICK_MS = 20;
@@ -50,13 +60,45 @@ const PARROT_STATION_INFO: StationInfo = {
   headingDeg: 0,
 };
 
+const TIME_STATION_INFO: StationInfo = {
+  id: TIME_STATION_ID,
+  callsign: TIME_STATION_CALLSIGN,
+  grid: TIME_STATION_GRID,
+  freqKHz: TIME_STATION_FREQ_KHZ,
+  txFreqKHz: TIME_STATION_FREQ_KHZ,
+  mode: "USB",
+  transmitting: true,
+  antenna: DEFAULT_ANTENNA,
+  headingDeg: 0,
+};
+
+const VOLMET_STATION_INFO: StationInfo = {
+  id: VOLMET_ID,
+  callsign: VOLMET_CALLSIGN,
+  grid: VOLMET_GRID,
+  freqKHz: VOLMET_FREQ_KHZ,
+  txFreqKHz: VOLMET_FREQ_KHZ,
+  mode: "USB",
+  transmitting: true,
+  antenna: DEFAULT_ANTENNA,
+  headingDeg: 0,
+};
+
 function send(ws: WebSocket, message: ServerMessage): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify(message));
 }
 
 function broadcastRoster(): void {
-  const stationInfos: StationInfo[] = [...stations.all().map(toStationInfo), BEACON_STATION_INFO, PARROT_STATION_INFO];
+  // The numbers station deliberately isn't listed here -- real ones are
+  // never announced either, they're only ever found by ear.
+  const stationInfos: StationInfo[] = [
+    ...stations.all().map(toStationInfo),
+    BEACON_STATION_INFO,
+    PARROT_STATION_INFO,
+    TIME_STATION_INFO,
+    VOLMET_STATION_INFO,
+  ];
   for (const s of stations.all()) {
     send(s.ws, { type: "roster", stations: stationInfos });
   }

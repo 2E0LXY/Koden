@@ -35,6 +35,22 @@ import {
   MorseBeacon,
 } from "./beacon.js";
 import { PARROT_FREQ_KHZ, PARROT_ID, ParrotEcho } from "./parrot.js";
+import {
+  NUMBERS_STATION_FREQ_KHZ,
+  NUMBERS_STATION_ID,
+  NUMBERS_STATION_SIGNAL_DB,
+  NumbersStation,
+  TIME_STATION_CARRIER_KHZ,
+  TIME_STATION_FREQ_KHZ,
+  TIME_STATION_ID,
+  TIME_STATION_SIGNAL_DB,
+  TimeTicker,
+  VOLMET_FREQ_KHZ,
+  VOLMET_ID,
+  VOLMET_SIGNAL_DB,
+  VoiceMurmur,
+} from "./utilityStations.js";
+import { ChirpSounder, ChirpVoice, CHIRP_SOUNDER_ID, CHIRP_SOUNDER_SIGNAL_DB } from "./chirpSounder.js";
 
 /** Fixed reference level for the parrot's played-back audio -- clear and strong, like the beacon. */
 const PARROT_SIGNAL_DB = -10;
@@ -71,6 +87,12 @@ export class MixerEngine {
   private tickCount = 0;
   private beacon = new MorseBeacon("KODEN BEACON", 10, 7);
   private parrot: ParrotEcho;
+  private timeTicker = new TimeTicker();
+  private timeOscByStation = new Map<string, BeaconToneOscillator>();
+  private volmet: VoiceMurmur;
+  private numbersStation: NumbersStation;
+  private chirpSounder: ChirpSounder;
+  private chirpVoiceByStation = new Map<string, ChirpVoice>();
 
   constructor(
     private stations: StationManager,
@@ -78,6 +100,9 @@ export class MixerEngine {
     private send: (ws: WebSocket, message: ServerMessage) => void,
   ) {
     this.parrot = new ParrotEcho(sampleRate, FRAME_SAMPLES);
+    this.volmet = new VoiceMurmur(sampleRate);
+    this.numbersStation = new NumbersStation(sampleRate);
+    this.chirpSounder = new ChirpSounder(sampleRate);
   }
 
   onDisconnect(id: string, nowMs: number): void {
@@ -92,6 +117,8 @@ export class MixerEngine {
       if (key.startsWith(`${id}:`) || key.endsWith(`:${id}`)) this.ssbShifterByPair.delete(key);
     }
     this.beaconOscByStation.delete(id);
+    this.timeOscByStation.delete(id);
+    this.chirpVoiceByStation.delete(id);
     this.parrot.handleDisconnect(id, nowMs);
   }
 
@@ -140,6 +167,22 @@ export class MixerEngine {
     const osc = new BeaconToneOscillator();
     byKey.set(spurKey, osc);
     return osc;
+  }
+
+  private getTimeOscillator(rx: Station): BeaconToneOscillator {
+    const existing = this.timeOscByStation.get(rx.id);
+    if (existing) return existing;
+    const osc = new BeaconToneOscillator();
+    this.timeOscByStation.set(rx.id, osc);
+    return osc;
+  }
+
+  private getChirpVoice(rx: Station): ChirpVoice {
+    const existing = this.chirpVoiceByStation.get(rx.id);
+    if (existing) return existing;
+    const voice = new ChirpVoice(this.sampleRate);
+    this.chirpVoiceByStation.set(rx.id, voice);
+    return voice;
   }
 
   private getNoiseGenerator(rx: Station, band: Band): BandNoiseGenerator {
@@ -208,6 +251,28 @@ export class MixerEngine {
     const parrotFrame = this.parrot.nextFrame();
     const parrotGain = dbToLinear(Math.min(PARROT_SIGNAL_DB, 0));
 
+    // Same reasoning as the beacon above: the tick pattern is identical for
+    // every listener, so it's computed once here; each listener still gets
+    // their own oscillator for the beat-note pitch.
+    const timeEnvelope = this.timeTicker.nextEnvelope(nowMs, this.sampleRate, FRAME_SAMPLES);
+    const timeGain = dbToLinear(Math.min(TIME_STATION_SIGNAL_DB, 0));
+
+    // VOLMET and the numbers station are simulated "broadcast" content --
+    // every listener hears the identical audio (there's no beat-note
+    // pitch dependent on individual tuning the way CW has), so each is
+    // rendered once per tick and shared.
+    const volmetFrame = this.volmet.render(FRAME_SAMPLES);
+    const volmetGain = dbToLinear(Math.min(VOLMET_SIGNAL_DB, 0));
+    const numbersFrame = this.numbersStation.render(FRAME_SAMPLES);
+    const numbersActive = this.numbersStation.active;
+    const numbersGain = dbToLinear(Math.min(NUMBERS_STATION_SIGNAL_DB, 0));
+
+    // The sounder's own sweep state only needs updating once per tick; see
+    // ChirpSounder's own comment for why this returns a swept *range*
+    // rather than an instantaneous frequency.
+    const chirpBracket = this.chirpSounder.tick(FRAME_SAMPLES);
+    const chirpGain = dbToLinear(Math.min(CHIRP_SOUNDER_SIGNAL_DB, 0));
+
     for (const rx of all) {
       // Even tuned into a gap between amateur allocations, a real receiver
       // still hears *something* rather than dead silence -- fall back to
@@ -266,6 +331,55 @@ export class MixerEngine {
         const qrmGain = dbToLinear(Math.min(levelDb, 0));
         for (let j = 0; j < output.length; j++) output[j] += qrmFrame[j] * qrmGain;
       });
+
+      // A WWV/WWVH-style time-standard station: a steady tick, same
+      // beat-note treatment as the beacon above.
+      const timeOffsetKHz = Math.abs(TIME_STATION_FREQ_KHZ - rx.freqKHz);
+      if (timeOffsetKHz <= passbandKHz(rx.mode, rx.filterWidth) / 2) {
+        audibleIds.push(TIME_STATION_ID);
+        peakSignalDb = Math.max(peakSignalDb, TIME_STATION_SIGNAL_DB);
+        const timeToneHz = Math.abs((rx.freqKHz - TIME_STATION_CARRIER_KHZ) * 1000);
+        const timeFrame = this.getTimeOscillator(rx).renderTone(timeEnvelope, this.sampleRate, timeToneHz);
+        for (let i = 0; i < output.length; i++) output[i] += timeFrame[i] * timeGain;
+      }
+
+      // A VOLMET-style droning weather announcer -- simulated program
+      // content, so unlike CW/QRM it's the same demodulated audio for
+      // every listener, just gated by passband.
+      if (Math.abs(VOLMET_FREQ_KHZ - rx.freqKHz) <= passbandKHz(rx.mode, rx.filterWidth) / 2) {
+        audibleIds.push(VOLMET_ID);
+        peakSignalDb = Math.max(peakSignalDb, VOLMET_SIGNAL_DB);
+        for (let i = 0; i < output.length; i++) output[i] += volmetFrame[i] * volmetGain;
+      }
+
+      // A numbers-station Easter egg -- only actually on the air during
+      // its own rare, scheduled episodes.
+      if (numbersActive && Math.abs(NUMBERS_STATION_FREQ_KHZ - rx.freqKHz) <= passbandKHz(rx.mode, rx.filterWidth) / 2) {
+        audibleIds.push(NUMBERS_STATION_ID);
+        peakSignalDb = Math.max(peakSignalDb, NUMBERS_STATION_SIGNAL_DB);
+        for (let i = 0; i < output.length; i++) output[i] += numbersFrame[i] * numbersGain;
+      }
+
+      // Ionospheric chirp sounder: trigger this listener's own brief chirp
+      // voice if the sweep crossed through their passband this tick, then
+      // keep rendering whatever's already playing regardless of the
+      // sweep's current position -- the chirp itself has a fixed, short
+      // duration once triggered (see ChirpVoice).
+      if (chirpBracket) {
+        const halfPassband = passbandKHz(rx.mode, rx.filterWidth) / 2;
+        const [lowKHz, highKHz] = chirpBracket;
+        if (rx.freqKHz + halfPassband >= lowKHz && rx.freqKHz - halfPassband <= highKHz) {
+          const voice = this.getChirpVoice(rx);
+          if (!voice.active) voice.trigger();
+        }
+      }
+      const chirpVoice = this.chirpVoiceByStation.get(rx.id);
+      if (chirpVoice?.active) {
+        audibleIds.push(CHIRP_SOUNDER_ID);
+        peakSignalDb = Math.max(peakSignalDb, CHIRP_SOUNDER_SIGNAL_DB);
+        const chirpFrame = chirpVoice.render(FRAME_SAMPLES);
+        for (let i = 0; i < output.length; i++) output[i] += chirpFrame[i] * chirpGain;
+      }
 
       // FM has a real "capture effect": the discriminator locks onto
       // whichever signal is strongest and suppresses the rest entirely,

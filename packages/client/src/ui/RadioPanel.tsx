@@ -140,7 +140,7 @@ interface RadioPanelProps {
   onToggleIpo: () => void;
   onToggleApf: () => void;
   onToggleDnr: () => void;
-  onToggleNotch: () => void;
+  onCycleNotchMode: () => void;
   onCycleNotchWidth: () => void;
 
   compEnabled: boolean;
@@ -283,7 +283,7 @@ export function RadioPanel(props: RadioPanelProps) {
     onToggleIpo,
     onToggleApf,
     onToggleDnr,
-    onToggleNotch,
+    onCycleNotchMode,
     onCycleNotchWidth,
     compEnabled,
     onToggleComp,
@@ -344,6 +344,7 @@ export function RadioPanel(props: RadioPanelProps) {
     : 0.94 + Math.sin(performance.now() / 137) * 0.05;
   const filterLabel = filterWidth === "narrow" ? "NAR" : filterWidth === "normal" ? "MID" : "WIDE";
   const notchWidthLabel = rx.notchWidth <= 3 ? "WIDE" : rx.notchWidth <= 7 ? "MID" : "NAR";
+  const notchModeLabel = rx.notchMode === "auto" ? "NOTCH:AN" : rx.notchMode === "manual" ? "NOTCH:MN" : "NOTCH";
   const antennaMeta = antennaById(antenna);
   const antennaLabel = antennaMeta
     ? `${antennaMeta.name}${antennaMeta.rotatable ? ` ${Math.round(heading).toString().padStart(3, "0")}°` : ""}`
@@ -460,7 +461,12 @@ export function RadioPanel(props: RadioPanelProps) {
         <PanelButton label="NB" active={rx.nbLevel > 0} onClick={onToggleNb} title="Noise blanker" />
         <PanelButton label="NR" active={rx.nrLevel > 0} onClick={onToggleNr} title="Noise reduction" />
         <PanelButton label="APF" active={rx.apfEnabled} onClick={onToggleApf} title="Audio peak filter (CW)" />
-        <PanelButton label="NOTCH" active={rx.notchDepth > 0} onClick={onToggleNotch} title="Manual notch filter" />
+        <PanelButton
+          label={notchModeLabel}
+          active={rx.notchMode !== "off"}
+          onClick={onCycleNotchMode}
+          title="Cycles AN (auto notch) -> MN (manual notch) -> OFF"
+        />
         <PanelButton label="R.FLT" onClick={onCycleFilterWidth} title={`Roofing filter: ${filterLabel}`} />
         <PanelButton label="CMP" active={compEnabled} onClick={onToggleComp} title="Speech processor" />
         <PanelButton label="DNR" active={rx.dnrEnabled} onClick={onToggleDnr} title="Digital noise reduction" />
@@ -729,7 +735,7 @@ export function RadioPanel(props: RadioPanelProps) {
               max={3000}
               format={(v) => `${Math.round(v)}Hz`}
               onChange={(v) => onUpdateRx({ notchFreqHz: v })}
-              title="Notch position -- rotate to tune it onto the interfering tone"
+              title="Manual notch position -- rotate to tune it onto the interfering tone (only affects MN mode; AN tunes itself)"
             />
             <PanelButton small label={`WIDTH:${notchWidthLabel}`} onClick={onCycleNotchWidth} title="Notch width: WIDE/MID/NAR" />
           </div>
