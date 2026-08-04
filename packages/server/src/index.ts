@@ -158,12 +158,14 @@ wss.on("connection", (ws) => {
       parsed = ClientMessage.parse(JSON.parse(data.toString()));
     } catch {
       send(ws, { type: "error", message: "Malformed message" });
+      if (!helloReceived) ws.close(1008, "Malformed message");
       return;
     }
 
     if (parsed.type === "hello") {
       if (!isValidGrid(parsed.grid)) {
         send(ws, { type: "error", message: "Invalid grid locator" });
+        ws.close(1008, "Invalid grid locator");
         return;
       }
       const defaultBand = bandById("40m")!;
@@ -171,8 +173,8 @@ wss.on("connection", (ws) => {
       const station: Station = {
         id,
         ws,
-        callsign: parsed.callsign,
-        grid: parsed.grid,
+        callsign: parsed.callsign.trim().toUpperCase(),
+        grid: parsed.grid.trim().toUpperCase(),
         freqKHz: startFreq,
         txFreqKHz: startFreq,
         mode: defaultBand.defaultMode,
@@ -225,8 +227,8 @@ wss.on("connection", (ws) => {
         send(ws, { type: "error", message: "Invalid grid locator" });
         return;
       }
-      station.callsign = parsed.callsign;
-      station.grid = parsed.grid;
+      station.callsign = parsed.callsign.trim().toUpperCase();
+      station.grid = parsed.grid.trim().toUpperCase();
       broadcastRoster();
     }
   });
