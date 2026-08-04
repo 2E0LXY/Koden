@@ -21,6 +21,8 @@ export interface ReceiveParams {
   notchFreqHz: number;
   /** 0..10 notch width/Q. */
   notchWidth: number;
+  /** NOTCH button cycles through these three, matching the real radio's AN -> MN -> OFF. */
+  notchMode: "off" | "manual" | "auto";
   /** Hz, -1500..1500 IF shift offset. */
   ifShiftHz: number;
   /** 0..10 passband tuning (Q of the IF shift filter). */
@@ -49,6 +51,7 @@ const DEFAULT_RECEIVE_PARAMS: ReceiveParams = {
   notchDepth: 0,
   notchFreqHz: 1000,
   notchWidth: 5,
+  notchMode: "off",
   ifShiftHz: 0,
   pbtQ: 5,
   width: 10,
@@ -110,6 +113,10 @@ export class AudioEngine {
   private outputMakeupGain: GainNode | null = null;
   private outputLimiter: WaveShaperNode | null = null;
   private rxAnalyser: AnalyserNode | null = null;
+  /** Tapped pre-notch (unlike rxAnalyser, which is post-everything) so auto notch judges the real incoming signal, not its own effect on it. */
+  private autoNotchAnalyser: AnalyserNode | null = null;
+  private autoNotchFreqData: Float32Array | null = null;
+  private autoNotchTimer: ReturnType<typeof setInterval> | null = null;
 
   // Transmit chain nodes.
   private micGainNode: GainNode | null = null;
@@ -197,6 +204,13 @@ export class AudioEngine {
     // right now -- real signal, real interference, correctly silent when
     // squelched -- rather than a synthetic/estimated value.
     this.rxAnalyser = new AnalyserNode(context, { fftSize: 512 });
+    // A fine-resolution tap on the pre-notch signal, used only by auto
+    // notch to locate a discrete tone to null -- separate from rxAnalyser
+    // (post-everything, coarse, used for S-meter/waterfall flicker) so auto
+    // notch judges the real incoming signal rather than its own effect on
+    // it, and has enough frequency resolution to actually pinpoint a tone.
+    this.autoNotchAnalyser = new AnalyserNode(context, { fftSize: 2048, smoothingTimeConstant: 0.6 });
+    this.autoNotchFreqData = new Float32Array(this.autoNotchAnalyser.frequencyBinCount);
 
     this.playbackNode
       .connect(this.ifShiftFilter)
@@ -213,6 +227,7 @@ export class AudioEngine {
       .connect(this.outputLimiter)
       .connect(context.destination);
     this.outputLimiter.connect(this.rxAnalyser);
+    this.ifShiftFilter.connect(this.autoNotchAnalyser);
 
     this.applyReceiveParams();
   }
@@ -389,9 +404,16 @@ export class AudioEngine {
     this.ifShiftFilter.frequency.value = Math.max(200, Math.min(2900, 1500 + p.ifShiftHz));
     this.ifShiftFilter.Q.value = 0.4 + (p.pbtQ / 10) * 8;
 
-    this.notchFilter.frequency.value = p.notchFreqHz;
-    // Depth 0 -> essentially bypassed (very low Q, negligible cut).
-    this.notchFilter.Q.value = 0.01 + (p.notchDepth / 10) * (0.5 + (p.notchWidth / 10) * 15);
+    if (p.notchMode === "manual") {
+      this.notchFilter.frequency.value = p.notchFreqHz;
+      this.notchFilter.Q.value = 0.5 + (p.notchWidth / 10) * 15;
+    } else if (p.notchMode === "off") {
+      this.notchFilter.Q.value = 0.01;
+    }
+    // "auto" mode's frequency/Q are driven continuously by the scan loop
+    // below instead of here -- it needs to keep running between param
+    // updates, tracking whatever tone is currently dominant.
+    this.setAutoNotchRunning(p.notchMode === "auto");
 
     // Peaking filter's gain is the bypass switch: 0dB = transparent.
     this.apfFilter.gain.value = p.apfEnabled ? 14 : 0;
@@ -451,6 +473,56 @@ export class AudioEngine {
     const ipoMul = p.ipoEnabled ? 0.8 : 1.25;
     this.rfGainNode.gain.value = Math.max(0, p.rfGain / 10) * 1.2 * attMul * ipoMul * balance;
     this.afGainNode.gain.value = Math.max(0, p.afGain / 10) * 1.5 * balance;
+  }
+
+  /** Starts/stops the periodic scan that drives auto notch's frequency; idempotent either way. */
+  private setAutoNotchRunning(shouldRun: boolean): void {
+    if (shouldRun) {
+      if (this.notchFilter) this.notchFilter.Q.value = 12;
+      if (!this.autoNotchTimer) {
+        this.autoNotchTimer = setInterval(() => this.scanForAutoNotch(), 300);
+      }
+    } else if (this.autoNotchTimer) {
+      clearInterval(this.autoNotchTimer);
+      this.autoNotchTimer = null;
+    }
+  }
+
+  /**
+   * Looks for a discrete tone (a birdie, heterodyne whistle, or QRM spur)
+   * standing well above the surrounding audio and, if found, retunes the
+   * notch filter onto it -- a real Auto Notch does the same continuous
+   * scan-and-track, without needing the operator to find and dial in the
+   * interfering tone by hand the way Manual Notch requires.
+   */
+  private scanForAutoNotch(): void {
+    if (!this.autoNotchAnalyser || !this.notchFilter || !this.context || !this.autoNotchFreqData) return;
+    this.autoNotchAnalyser.getFloatFrequencyData(this.autoNotchFreqData as Float32Array<ArrayBuffer>);
+    const bins = this.autoNotchFreqData.length;
+    const binHz = this.context.sampleRate / (2 * bins);
+    // Restrict the search to the range a real interfering tone/heterodyne
+    // would actually occupy -- well clear of DC/rumble at the low end and
+    // of the passband's own upper edge.
+    const minBin = Math.max(1, Math.round(250 / binHz));
+    const maxBin = Math.min(bins - 1, Math.round(3200 / binHz));
+    let peakBin = -1;
+    let peakVal = -Infinity;
+    let sum = 0;
+    let count = 0;
+    for (let i = minBin; i <= maxBin; i++) {
+      const v = this.autoNotchFreqData[i];
+      sum += v;
+      count++;
+      if (v > peakVal) {
+        peakVal = v;
+        peakBin = i;
+      }
+    }
+    if (peakBin < 0 || count === 0) return;
+    const avg = sum / count;
+    if (peakVal - avg > 12) {
+      this.notchFilter.frequency.setTargetAtTime(peakBin * binHz, this.context.currentTime, 0.05);
+    }
   }
 
   /**

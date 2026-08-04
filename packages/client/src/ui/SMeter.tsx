@@ -16,21 +16,21 @@ interface SMeterProps {
   getLiveLevel?: () => { rms: number; peak: number };
 }
 
-/** Fraction along the scale where "S9" sits, matching the old analog gauge's tick layout. */
-const S9_AT = 0.571;
+/** IARU Region 1's actual S-meter spec: exactly 6dB per S-point (S1 = -121dBm, S9 = -73dBm, 8 steps between them). */
+const DB_PER_S_UNIT = 6;
 
-function sColor(pos: number): string {
-  if (pos < S9_AT) return "#28d17c";
-  if (pos < 0.857) return "#e8c73a";
+function sColor(pos: number, s9At: number): string {
+  if (pos < s9At) return "#28d17c";
+  if (pos < s9At + (1 - s9At) * 0.6) return "#e8c73a";
   return "#e14b3a";
 }
 
-function sReadout(normalized: number): string {
-  if (normalized <= S9_AT) {
-    const s = Math.max(1, Math.round((normalized / S9_AT) * 9));
+function sReadout(normalized: number, s9At: number): string {
+  if (normalized <= s9At) {
+    const s = Math.max(1, Math.round((normalized / s9At) * 9));
     return `S${s}`;
   }
-  const overDb = Math.round(((normalized - S9_AT) / (1 - S9_AT)) * 60);
+  const overDb = Math.round(((normalized - s9At) / (1 - s9At)) * 60);
   return `S9+${overDb}`;
 }
 
@@ -44,6 +44,11 @@ function sReadout(normalized: number): string {
 // heading even with nothing "audible" tuned in, the same way a real one
 // would as you rotate a beam off a noisy direction.
 export function SMeter({ signalDb, minDb = -80, maxDb = 50, getLiveLevel }: SMeterProps) {
+  // Where "S9" lands on the 0..1 bar, derived (not guessed) so the S1-S9
+  // portion of the scale works out to exactly 6dB per S-point against our
+  // calibrated minDb/maxDb -- the real IARU spec's slope, even though our
+  // internal dB scale isn't literal dBm.
+  const s9At = (DB_PER_S_UNIT * 9) / (maxDb - minDb);
   const baseline = useMemo(() => {
     const t = (signalDb - minDb) / (maxDb - minDb);
     return Math.max(0, Math.min(1, t));
@@ -76,5 +81,12 @@ export function SMeter({ signalDb, minDb = -80, maxDb = 50, getLiveLevel }: SMet
 
   const normalized = Math.max(0, Math.min(1, baseline + liveBoost * 0.12));
 
-  return <MeterBar label="S-METER" value={normalized} colorAt={sColor} readout={sReadout(normalized)} />;
+  return (
+    <MeterBar
+      label="S-METER"
+      value={normalized}
+      colorAt={(pos) => sColor(pos, s9At)}
+      readout={sReadout(normalized, s9At)}
+    />
+  );
 }
