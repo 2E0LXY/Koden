@@ -53,15 +53,24 @@ export const VOLMET_SIGNAL_DB = -20;
  * listener hears the identical content), not one per listener.
  */
 export class VoiceMurmur {
+  // Three rough vowel-formant bands (F1/F2/F3), summed in parallel -- not
+  // cascaded. Chaining bandpass filters in series multiplies their
+  // responses together, which (even though each one alone is fairly wide)
+  // collapses the combined passband down to little more than the single
+  // frequency where both happen to overlap, i.e. a near-pure ringing tone
+  // -- indistinguishable from CW. Parallel summation keeps each formant's
+  // own width intact, giving a genuinely broadband, textured colour.
   private bp1: Biquad;
   private bp2: Biquad;
+  private bp3: Biquad;
   private envelope = 0;
   private inBurst = true;
   private segmentSamplesLeft = 0;
 
   constructor(private sampleRate: number) {
-    this.bp1 = Biquad.bandpass(sampleRate, 500, 1.1);
-    this.bp2 = Biquad.bandpass(sampleRate, 1400, 0.9);
+    this.bp1 = Biquad.bandpass(sampleRate, 500, 0.8);
+    this.bp2 = Biquad.bandpass(sampleRate, 1200, 0.8);
+    this.bp3 = Biquad.bandpass(sampleRate, 2400, 0.7);
     this.scheduleBurst();
   }
 
@@ -77,7 +86,7 @@ export class VoiceMurmur {
   }
 
   render(nSamples: number): Float32Array {
-    const out = new Float32Array(nSamples);
+    const noise = new Float32Array(nSamples);
     for (let i = 0; i < nSamples; i++) {
       if (this.segmentSamplesLeft <= 0) {
         if (this.inBurst) this.scheduleGap();
@@ -86,10 +95,16 @@ export class VoiceMurmur {
       this.segmentSamplesLeft--;
       const target = this.inBurst ? 1 : 0;
       this.envelope += (target - this.envelope) * 0.02;
-      out[i] = (Math.random() * 2 - 1) * this.envelope;
+      noise[i] = (Math.random() * 2 - 1) * this.envelope;
     }
-    this.bp1.processInPlace(out);
-    this.bp2.processInPlace(out);
+    const f1 = noise.slice();
+    const f2 = noise.slice();
+    const f3 = noise.slice();
+    this.bp1.processInPlace(f1);
+    this.bp2.processInPlace(f2);
+    this.bp3.processInPlace(f3);
+    const out = new Float32Array(nSamples);
+    for (let i = 0; i < nSamples; i++) out[i] = (f1[i] + f2[i] * 0.85 + f3[i] * 0.5) * 0.55;
     return out;
   }
 }
