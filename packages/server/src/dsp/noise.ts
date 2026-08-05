@@ -326,12 +326,45 @@ export class VdslHum {
   private pink = new PinkNoise();
   private lowpass: Biquad;
   private activityPhase = Math.random() * Math.PI * 2;
+  private centerKHz: number;
+  private targetKHz: number;
+  private readonly rangeLoKHz: number;
+  private readonly rangeHiKHz: number;
+  private readonly driftKHzPerSec: number;
+  private readonly halfWidthKHz: number;
 
-  constructor(private sampleRate: number, private intensity: number) {
+  constructor(private sampleRate: number, private intensity: number, band: Band) {
     this.lowpass = Biquad.lowpass(sampleRate, 2200, 0.7);
+    const [lo, hi] = band.rangeKHz;
+    this.rangeLoKHz = lo;
+    this.rangeHiKHz = hi;
+    // Real VDSL/powerline ingress couples in strongest over some chunk of
+    // the band, not uniformly across all of it -- so it's something you can
+    // tune away from, like a real "buzz that's bad over here" rather than a
+    // permanent fixture of the whole band.
+    this.halfWidthKHz = Math.max(25, (hi - lo) * 0.3);
+    this.centerKHz = lo + hashFrac(`vdsl-center:${band.id}:${Math.round(sampleRate)}`) * (hi - lo);
+    this.targetKHz = this.centerKHz;
+    // Wanders to a new spot over many minutes -- a real installation's
+    // noise profile shifts with load, temperature, or a sync retrain
+    // elsewhere on the line -- instead of sitting nailed to one dial
+    // position forever.
+    this.driftKHzPerSec = (hi - lo) / (600 + Math.random() * 900);
   }
 
-  fillAdd(out: Float32Array): void {
+  fillAdd(out: Float32Array, rxFreqKHz: number): void {
+    if (Math.random() < 0.0004) {
+      this.targetKHz = this.rangeLoKHz + Math.random() * (this.rangeHiKHz - this.rangeLoKHz);
+    }
+    const dtSec = out.length / this.sampleRate;
+    const delta = this.targetKHz - this.centerKHz;
+    this.centerKHz += Math.sign(delta) * Math.min(Math.abs(delta), this.driftKHzPerSec * dtSec);
+
+    const offsetKHz = Math.abs(rxFreqKHz - this.centerKHz);
+    const t = Math.min(1, offsetKHz / this.halfWidthKHz);
+    const levelScale = Math.max(0, 1 - t * t);
+    if (levelScale <= 0.01) return;
+
     const scratch = new Float32Array(out.length);
     const activityStep = (2 * Math.PI * 0.003) / this.sampleRate; // ~5.5 min period
     for (let i = 0; i < out.length; i++) {
@@ -341,7 +374,7 @@ export class VdslHum {
       scratch[i] = this.pink.next() * activity;
     }
     this.lowpass.processInPlace(scratch);
-    for (let i = 0; i < out.length; i++) out[i] += scratch[i] * this.intensity;
+    for (let i = 0; i < out.length; i++) out[i] += scratch[i] * this.intensity * levelScale;
   }
 }
 
@@ -552,7 +585,7 @@ export class BandNoiseGenerator {
     // atmospheric characteristic, so it's gated purely by chance rather
     // than band position.
     if (Math.random() < 0.4) {
-      this.vdslHum = new VdslHum(sampleRate, 1.0 + Math.random() * 1.4);
+      this.vdslHum = new VdslHum(sampleRate, 1.0 + Math.random() * 1.4, band);
     }
 
     // Over-the-horizon radar sweeps are specific to 20m/15m, not a general
@@ -651,10 +684,12 @@ export class BandNoiseGenerator {
 
   /**
    * Generate one frame of ambient band noise. `noiseFloorDb` should already
-   * include any mode-bandwidth and day/night adjustments; `crackleRateMultiplier`
+   * include any mode-bandwidth and day/night adjustments; `rxFreqKHz` lets
+   * frequency-localized components (like VDSL hum) know how close the
+   * listener's dial is to their own trouble spot; `crackleRateMultiplier`
    * lets callers boost atmospheric crashes at night without rebuilding the generator.
    */
-  generate(nSamples: number, noiseFloorDb: number, crackleRateMultiplier = 1): Float32Array {
+  generate(nSamples: number, noiseFloorDb: number, rxFreqKHz: number, crackleRateMultiplier = 1): Float32Array {
     const out = new Float32Array(nSamples);
     this.pink.fill(out);
 
@@ -662,7 +697,7 @@ export class BandNoiseGenerator {
     this.crackle.fillAdd(out);
     this.ignition.fillAdd(out);
     this.smpsHash.fillAdd(out);
-    if (this.vdslHum) this.vdslHum.fillAdd(out);
+    if (this.vdslHum) this.vdslHum.fillAdd(out, rxFreqKHz);
     if (this.woodpecker) this.woodpecker.fillAdd(out);
     for (const b of this.birdies) b.fillAdd(out);
     if (this.heterodyne) this.heterodyne.fillAdd(out);

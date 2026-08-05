@@ -267,6 +267,19 @@ button {
   text-shadow: 0 0 12px rgba(232, 184, 75, 0.5);
   margin: 2px 0;
   text-align: center;
+  cursor: ns-resize;
+}
+.freq-digit {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0 1px;
+}
+.freq-digit:hover {
+  background: rgba(232, 184, 75, 0.15);
+}
+.freq-digit--selected {
+  background: rgba(232, 184, 75, 0.35);
+  text-shadow: 0 0 16px rgba(232, 184, 75, 0.9);
 }
 
 .panel__indicator {

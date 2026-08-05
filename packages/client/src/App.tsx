@@ -594,13 +594,13 @@ export function App() {
   );
 
   const stepFreq = useCallback(
-    (dir: 1 | -1) => {
+    (dir: 1 | -1, customStepKHz?: number) => {
       if (vfoLocked) return;
       if (vfoMMode === "M") {
         cycleMemory(dir);
         return;
       }
-      const stepKHz = STEP_KHZ[tuneStep];
+      const stepKHz = customStepKHz ?? STEP_KHZ[tuneStep];
       setActiveVfoState((prev) => {
         const b = findBand(prev.freqKHz);
         const next = prev.freqKHz + dir * stepKHz;
@@ -946,6 +946,7 @@ export function App() {
         onSetTuneStep={(s) => setTuneStep((prev) => (prev === s ? "NORMAL" : s))}
         onStepUp={() => stepFreq(1)}
         onStepDown={() => stepFreq(-1)}
+        onStepFreq={stepFreq}
         onAutoTune={onAutoTune}
         ritEnabled={ritEnabled}
         onToggleRit={() => setRitEnabled((s) => !s)}
