@@ -17,7 +17,7 @@ import type { Station } from "../stationManager.js";
 import { StationManager } from "../stationManager.js";
 import { PropagationEngine, passbandKHz } from "./propagation.js";
 import { SporadicEEngine } from "./sporadicE.js";
-import { BandNoiseGenerator, dbToLinear, hashFrac, modeNoiseGainDb } from "./noise.js";
+import { AtmosphericCrackle, BandNoiseGenerator, PinkNoise, dbToLinear, hashFrac, modeNoiseGainDb } from "./noise.js";
 import { qrmLevelDb, qrmSpursForBand } from "./qrm.js";
 import {
   MultipathFilter,
@@ -52,8 +52,8 @@ import {
 } from "./utilityStations.js";
 import { ChirpSounder, ChirpVoice, CHIRP_SOUNDER_ID, CHIRP_SOUNDER_SIGNAL_DB } from "./chirpSounder.js";
 
-/** Fixed reference level for the parrot's played-back audio -- clear and strong, like the beacon. */
-const PARROT_SIGNAL_DB = -10;
+/** Fixed reference level for the parrot's played-back audio -- strong, like the beacon, but with headroom left below full scale for its own static (see PARROT_STATIC_LEVEL) to actually be audible against it. */
+const PARROT_SIGNAL_DB = -15;
 /**
  * Real transmissions get frequency-selective multipath fading scaled by
  * distance -- the parrot has no such distance to draw from (it isn't
@@ -64,7 +64,17 @@ const PARROT_SIGNAL_DB = -10;
  * played-back file -- present but well short of a real fading signal's
  * strongest depth (see propagation.ts's own distance-scaled multipathDepth).
  */
-const PARROT_MULTIPATH_DEPTH = 0.18;
+const PARROT_MULTIPATH_DEPTH = 0.22;
+/**
+ * The parrot lives on 6m, whose modeled noise floor is the quietest of any
+ * band (baseNoiseFloorDb -55) -- so relying on the general per-band ambient
+ * noise layer alone left the parrot's own signal towering over it,
+ * regardless of the multipath texture above. Mixed in directly, at a level
+ * comparable to a *typical* band's ambient floor elsewhere in the sim, so
+ * the echo test reads as genuine over-the-air audio no matter which band
+ * it happens to sit on, not a clean local file with a faint wobble on top.
+ */
+const PARROT_STATIC_LEVEL = 0.09;
 
 const AUDIBLE_THRESHOLD_DB = -38;
 const METER_EVERY_N_TICKS = 4;
@@ -93,6 +103,8 @@ export class MixerEngine {
   private beaconOscByStation = new Map<string, BeaconToneOscillator>();
   /** One independent multipath sweep per listener, so the parrot's playback -- like a real transmission -- doesn't reach every listener as an identical, perfectly clean copy. */
   private parrotMultipathByStation = new Map<string, MultipathFilter>();
+  /** One independent hiss/crackle generator per listener backing the parrot's own always-present static -- see PARROT_STATIC_LEVEL. */
+  private parrotStaticByStation = new Map<string, { pink: PinkNoise; crackle: AtmosphericCrackle }>();
   /** One oscillator per (station, band, spur index), so its phase stays continuous while a listener sits tuned near a spur. */
   private qrmOscByStation = new Map<string, Map<string, BeaconToneOscillator>>();
   /** QRM spurs are always "keyed" -- a steady carrier, not Morse -- so every listener shares this same constant envelope. */
@@ -131,6 +143,7 @@ export class MixerEngine {
     }
     this.beaconOscByStation.delete(id);
     this.parrotMultipathByStation.delete(id);
+    this.parrotStaticByStation.delete(id);
     this.timeOscByStation.delete(id);
     this.chirpVoiceByStation.delete(id);
     this.parrot.handleDisconnect(id, nowMs);
@@ -176,6 +189,14 @@ export class MixerEngine {
     const filter = new MultipathFilter(this.sampleRate);
     this.parrotMultipathByStation.set(rx.id, filter);
     return filter;
+  }
+
+  private getParrotStatic(rx: Station): { pink: PinkNoise; crackle: AtmosphericCrackle } {
+    const existing = this.parrotStaticByStation.get(rx.id);
+    if (existing) return existing;
+    const state = { pink: new PinkNoise(), crackle: new AtmosphericCrackle(this.sampleRate, 1.8, 0.15) };
+    this.parrotStaticByStation.set(rx.id, state);
+    return state;
   }
 
   private getQrmOscillator(rx: Station, spurKey: string): BeaconToneOscillator {
@@ -367,6 +388,14 @@ export class MixerEngine {
           fmCandidates.push({ id: PARROT_ID, signalDb: PARROT_SIGNAL_DB, audio: parrotFiltered });
         } else {
           for (let i = 0; i < output.length; i++) output[i] += parrotFiltered[i] * parrotGain;
+          // Mixed in at a fixed absolute level (not scaled by parrotGain) --
+          // this represents the channel's own noise, not something that
+          // gets stronger or weaker with the transmitted signal itself.
+          const parrotStatic = this.getParrotStatic(rx);
+          const staticFrame = new Float32Array(output.length);
+          for (let i = 0; i < staticFrame.length; i++) staticFrame[i] = parrotStatic.pink.next() * PARROT_STATIC_LEVEL;
+          parrotStatic.crackle.fillAdd(staticFrame);
+          for (let i = 0; i < output.length; i++) output[i] += staticFrame[i];
         }
       }
 
