@@ -54,6 +54,17 @@ import { ChirpSounder, ChirpVoice, CHIRP_SOUNDER_ID, CHIRP_SOUNDER_SIGNAL_DB } f
 
 /** Fixed reference level for the parrot's played-back audio -- clear and strong, like the beacon. */
 const PARROT_SIGNAL_DB = -10;
+/**
+ * Real transmissions get frequency-selective multipath fading scaled by
+ * distance -- the parrot has no such distance to draw from (it isn't
+ * routed through the propagation engine at all), but real RF never arrives
+ * through a perfectly flat, multipath-free channel either, even at short
+ * range. A modest fixed depth keeps the echo test useful for actually
+ * judging your own audio quality while no longer sounding like a locally
+ * played-back file -- present but well short of a real fading signal's
+ * strongest depth (see propagation.ts's own distance-scaled multipathDepth).
+ */
+const PARROT_MULTIPATH_DEPTH = 0.18;
 
 const AUDIBLE_THRESHOLD_DB = -38;
 const METER_EVERY_N_TICKS = 4;
@@ -80,6 +91,8 @@ export class MixerEngine {
   private multipathByPair = new Map<string, MultipathFilter>();
   private ssbShifterByPair = new Map<string, SsbFrequencyShifter>();
   private beaconOscByStation = new Map<string, BeaconToneOscillator>();
+  /** One independent multipath sweep per listener, so the parrot's playback -- like a real transmission -- doesn't reach every listener as an identical, perfectly clean copy. */
+  private parrotMultipathByStation = new Map<string, MultipathFilter>();
   /** One oscillator per (station, band, spur index), so its phase stays continuous while a listener sits tuned near a spur. */
   private qrmOscByStation = new Map<string, Map<string, BeaconToneOscillator>>();
   /** QRM spurs are always "keyed" -- a steady carrier, not Morse -- so every listener shares this same constant envelope. */
@@ -117,6 +130,7 @@ export class MixerEngine {
       if (key.startsWith(`${id}:`) || key.endsWith(`:${id}`)) this.ssbShifterByPair.delete(key);
     }
     this.beaconOscByStation.delete(id);
+    this.parrotMultipathByStation.delete(id);
     this.timeOscByStation.delete(id);
     this.chirpVoiceByStation.delete(id);
     this.parrot.handleDisconnect(id, nowMs);
@@ -154,6 +168,14 @@ export class MixerEngine {
     const osc = new BeaconToneOscillator();
     this.beaconOscByStation.set(rx.id, osc);
     return osc;
+  }
+
+  private getParrotMultipathFilter(rx: Station): MultipathFilter {
+    const existing = this.parrotMultipathByStation.get(rx.id);
+    if (existing) return existing;
+    const filter = new MultipathFilter(this.sampleRate);
+    this.parrotMultipathByStation.set(rx.id, filter);
+    return filter;
   }
 
   private getQrmOscillator(rx: Station, spurKey: string): BeaconToneOscillator {
@@ -327,14 +349,24 @@ export class MixerEngine {
 
       // The parrot echo test: audible (like a real repeater's parrot
       // function) to anyone tuned to it while a recording is replaying,
-      // not just whoever recorded it.
+      // not just whoever recorded it. Unlike a real transmission, the
+      // parrot never goes through the propagation engine (no distance to
+      // model), so it gets its own modest fixed multipath sweep here --
+      // otherwise it's the one signal in the whole sim that always arrives
+      // as a perfectly clean copy, undermining its whole point as a "how do
+      // I actually sound over the air" test. Each listener gets their own
+      // filter instance (not a shared one) so the sweep isn't identical for
+      // everyone tuned in at once, the same way two listeners of a real
+      // transmission hear independently-drifting fading.
       if (parrotFrame && Math.abs(PARROT_FREQ_KHZ - rx.freqKHz) <= passbandKHz(rx.mode, rx.filterWidth) / 2) {
         audibleIds.push(PARROT_ID);
         peakSignalDb = Math.max(peakSignalDb, PARROT_SIGNAL_DB);
+        const parrotFiltered = parrotFrame.slice();
+        this.getParrotMultipathFilter(rx).processInPlace(parrotFiltered, PARROT_MULTIPATH_DEPTH);
         if (rx.mode === "FM") {
-          fmCandidates.push({ id: PARROT_ID, signalDb: PARROT_SIGNAL_DB, audio: parrotFrame });
+          fmCandidates.push({ id: PARROT_ID, signalDb: PARROT_SIGNAL_DB, audio: parrotFiltered });
         } else {
-          for (let i = 0; i < output.length; i++) output[i] += parrotFrame[i] * parrotGain;
+          for (let i = 0; i < output.length; i++) output[i] += parrotFiltered[i] * parrotGain;
         }
       }
 
