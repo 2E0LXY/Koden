@@ -652,9 +652,22 @@ export class BandNoiseGenerator {
     this.shaperMakeupGain = 1;
     if (!(mode === "AM" && this.heterodyne)) this.heterodyne = null;
 
-    if (mode === "CW" || mode === "RTTY") {
+    if (mode === "CW") {
       this.shaper = Biquad.bandpass(this.sampleRate, 700, 0.9);
-      this.shaperMakeupGain = 2.6; // narrow bandpass throws away most of the energy
+      // Narrow bandpass throws away most of the energy, so some makeup gain
+      // is a legitimate correction to keep it audible rather than a near-
+      // silent sliver -- but kept modest (not fully restored to broadband
+      // loudness) so CW's much narrower passband still nets out noticeably
+      // quieter than SSB overall, per modeNoiseGainDb's own bandwidth math
+      // (applied separately, upstream, as part of the noise floor itself).
+      this.shaperMakeupGain = 1.8;
+    } else if (mode === "RTTY") {
+      // RTTY's mark/space tones conventionally sit around 2125/2295Hz (a
+      // 170Hz shift), not CW's ~700Hz sidetone -- shaping the noise around
+      // that higher window instead of reusing CW's filter keeps RTTY's
+      // texture from just sounding like narrowband CW hiss.
+      this.shaper = Biquad.bandpass(this.sampleRate, 2210, 0.7);
+      this.shaperMakeupGain = 1.7;
     } else if (mode === "USB" || mode === "LSB" || mode === "DATA") {
       this.shaperHighpass = Biquad.highpass(this.sampleRate, 300, 0.7);
       this.shaper = Biquad.lowpass(this.sampleRate, 2700, 0.7);

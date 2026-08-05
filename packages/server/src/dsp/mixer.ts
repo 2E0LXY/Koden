@@ -15,7 +15,7 @@ import {
 } from "@koden/shared";
 import type { Station } from "../stationManager.js";
 import { StationManager } from "../stationManager.js";
-import { PropagationEngine, passbandKHz, type PropagationResult } from "./propagation.js";
+import { PropagationEngine, passbandKHz } from "./propagation.js";
 import { SporadicEEngine } from "./sporadicE.js";
 import { BandNoiseGenerator, dbToLinear, hashFrac, modeNoiseGainDb } from "./noise.js";
 import { qrmLevelDb, qrmSpursForBand } from "./qrm.js";
@@ -284,6 +284,19 @@ export class MixerEngine {
       const audibleIds: string[] = [];
       let peakSignalDb = -Infinity;
 
+      // FM has a real "capture effect": the discriminator locks onto
+      // whichever signal is strongest and suppresses the rest entirely,
+      // unlike AM/SSB/CW where every audible signal blends together
+      // additively. Every audio source a listener could hear this tick --
+      // fixed stations (beacon, parrot, QRM, time signal, VOLMET, numbers
+      // station, chirp sounder) exactly as much as real transmitting
+      // stations -- gets collected here when the listener is in FM instead
+      // of being mixed immediately, so the winner can be picked after
+      // seeing every candidate; a captured QSO on FM shouldn't also have a
+      // persistent beacon or QRM spur playing underneath it, any more than
+      // a real FM discriminator would let two carriers through at once.
+      const fmCandidates: { id: string; signalDb: number; audio: Float32Array }[] = [];
+
       // The test beacon bypasses propagation entirely: a fixed, always-on
       // reference signal at BEACON_SIGNAL_DB for anyone tuned within their
       // passband of BEACON_FREQ_KHZ, regardless of distance or band conditions.
@@ -305,7 +318,11 @@ export class MixerEngine {
         // silence exactly on frequency (zero beat), instead of a fixed tone.
         const beaconToneHz = Math.abs((rx.freqKHz - BEACON_CARRIER_KHZ) * 1000);
         const beaconFrame = this.getBeaconOscillator(rx).renderTone(beaconEnvelope, this.sampleRate, beaconToneHz);
-        for (let i = 0; i < output.length; i++) output[i] += beaconFrame[i] * beaconGain;
+        if (rx.mode === "FM") {
+          fmCandidates.push({ id: BEACON_ID, signalDb: BEACON_SIGNAL_DB, audio: beaconFrame });
+        } else {
+          for (let i = 0; i < output.length; i++) output[i] += beaconFrame[i] * beaconGain;
+        }
       }
 
       // The parrot echo test: audible (like a real repeater's parrot
@@ -314,7 +331,11 @@ export class MixerEngine {
       if (parrotFrame && Math.abs(PARROT_FREQ_KHZ - rx.freqKHz) <= passbandKHz(rx.mode, rx.filterWidth) / 2) {
         audibleIds.push(PARROT_ID);
         peakSignalDb = Math.max(peakSignalDb, PARROT_SIGNAL_DB);
-        for (let i = 0; i < output.length; i++) output[i] += parrotFrame[i] * parrotGain;
+        if (rx.mode === "FM") {
+          fmCandidates.push({ id: PARROT_ID, signalDb: PARROT_SIGNAL_DB, audio: parrotFrame });
+        } else {
+          for (let i = 0; i < output.length; i++) output[i] += parrotFrame[i] * parrotGain;
+        }
       }
 
       // Fixed-frequency QRM/birdie spurs: unlike the ambient band noise
@@ -328,8 +349,12 @@ export class MixerEngine {
         peakSignalDb = Math.max(peakSignalDb, levelDb);
         const toneHz = Math.abs((rx.freqKHz - spurFreqKHz) * 1000);
         const qrmFrame = this.getQrmOscillator(rx, `${rxBand.id}:${i}`).renderTone(this.qrmEnvelope, this.sampleRate, toneHz);
-        const qrmGain = dbToLinear(Math.min(levelDb, 0));
-        for (let j = 0; j < output.length; j++) output[j] += qrmFrame[j] * qrmGain;
+        if (rx.mode === "FM") {
+          fmCandidates.push({ id: `qrm:${rxBand.id}:${i}`, signalDb: levelDb, audio: qrmFrame });
+        } else {
+          const qrmGain = dbToLinear(Math.min(levelDb, 0));
+          for (let j = 0; j < output.length; j++) output[j] += qrmFrame[j] * qrmGain;
+        }
       });
 
       // A WWV/WWVH-style time-standard station: a steady tick, same
@@ -340,7 +365,11 @@ export class MixerEngine {
         peakSignalDb = Math.max(peakSignalDb, TIME_STATION_SIGNAL_DB);
         const timeToneHz = Math.abs((rx.freqKHz - TIME_STATION_CARRIER_KHZ) * 1000);
         const timeFrame = this.getTimeOscillator(rx).renderTone(timeEnvelope, this.sampleRate, timeToneHz);
-        for (let i = 0; i < output.length; i++) output[i] += timeFrame[i] * timeGain;
+        if (rx.mode === "FM") {
+          fmCandidates.push({ id: TIME_STATION_ID, signalDb: TIME_STATION_SIGNAL_DB, audio: timeFrame });
+        } else {
+          for (let i = 0; i < output.length; i++) output[i] += timeFrame[i] * timeGain;
+        }
       }
 
       // A VOLMET-style droning weather announcer -- simulated program
@@ -349,7 +378,11 @@ export class MixerEngine {
       if (Math.abs(VOLMET_FREQ_KHZ - rx.freqKHz) <= passbandKHz(rx.mode, rx.filterWidth) / 2) {
         audibleIds.push(VOLMET_ID);
         peakSignalDb = Math.max(peakSignalDb, VOLMET_SIGNAL_DB);
-        for (let i = 0; i < output.length; i++) output[i] += volmetFrame[i] * volmetGain;
+        if (rx.mode === "FM") {
+          fmCandidates.push({ id: VOLMET_ID, signalDb: VOLMET_SIGNAL_DB, audio: volmetFrame });
+        } else {
+          for (let i = 0; i < output.length; i++) output[i] += volmetFrame[i] * volmetGain;
+        }
       }
 
       // A numbers-station Easter egg -- only actually on the air during
@@ -357,7 +390,11 @@ export class MixerEngine {
       if (numbersActive && Math.abs(NUMBERS_STATION_FREQ_KHZ - rx.freqKHz) <= passbandKHz(rx.mode, rx.filterWidth) / 2) {
         audibleIds.push(NUMBERS_STATION_ID);
         peakSignalDb = Math.max(peakSignalDb, NUMBERS_STATION_SIGNAL_DB);
-        for (let i = 0; i < output.length; i++) output[i] += numbersFrame[i] * numbersGain;
+        if (rx.mode === "FM") {
+          fmCandidates.push({ id: NUMBERS_STATION_ID, signalDb: NUMBERS_STATION_SIGNAL_DB, audio: numbersFrame });
+        } else {
+          for (let i = 0; i < output.length; i++) output[i] += numbersFrame[i] * numbersGain;
+        }
       }
 
       // Ionospheric chirp sounder: trigger this listener's own brief chirp
@@ -378,15 +415,12 @@ export class MixerEngine {
         audibleIds.push(CHIRP_SOUNDER_ID);
         peakSignalDb = Math.max(peakSignalDb, CHIRP_SOUNDER_SIGNAL_DB);
         const chirpFrame = chirpVoice.render(FRAME_SAMPLES);
-        for (let i = 0; i < output.length; i++) output[i] += chirpFrame[i] * chirpGain;
+        if (rx.mode === "FM") {
+          fmCandidates.push({ id: CHIRP_SOUNDER_ID, signalDb: CHIRP_SOUNDER_SIGNAL_DB, audio: chirpFrame });
+        } else {
+          for (let i = 0; i < output.length; i++) output[i] += chirpFrame[i] * chirpGain;
+        }
       }
-
-      // FM has a real "capture effect": the discriminator locks onto
-      // whichever signal is strongest and suppresses the rest entirely,
-      // unlike AM/SSB/CW where every audible signal blends together
-      // additively. Collected here instead of mixed immediately so the
-      // winner can be picked after seeing every candidate.
-      const fmCandidates: { tx: Station; result: PropagationResult; audio: Float32Array }[] = [];
 
       for (const tx of transmitters) {
         if (tx.id === rx.id) continue;
@@ -457,7 +491,7 @@ export class MixerEngine {
         if (result.splatterZone) applySplatterColorInPlace(scratch);
 
         if (rx.mode === "FM") {
-          fmCandidates.push({ tx, result, audio: scratch.slice() });
+          fmCandidates.push({ id: tx.id, signalDb: result.signalDb, audio: scratch.slice() });
           continue;
         }
 
@@ -466,10 +500,10 @@ export class MixerEngine {
       }
 
       if (fmCandidates.length > 0) {
-        fmCandidates.sort((a, b) => b.result.signalDb - a.result.signalDb);
+        fmCandidates.sort((a, b) => b.signalDb - a.signalDb);
         const strongest = fmCandidates[0];
         const runnerUp = fmCandidates[1];
-        if (runnerUp && strongest.result.signalDb - runnerUp.result.signalDb < FM_CAPTURE_CONTEST_DB) {
+        if (runnerUp && strongest.signalDb - runnerUp.signalDb < FM_CAPTURE_CONTEST_DB) {
           // Too close to call: the discriminator flip-flops rapidly between
           // the two signals, producing fluttering, distorted audio instead
           // of a clean capture.
@@ -478,11 +512,11 @@ export class MixerEngine {
           for (let i = 0; i < output.length; i++) {
             if (i % chunkSamples === 0) useStrongest = Math.random() < 0.5;
             const winner = useStrongest ? strongest : runnerUp;
-            const gain = dbToLinear(Math.min(winner.result.signalDb, 0));
+            const gain = dbToLinear(Math.min(winner.signalDb, 0));
             output[i] += winner.audio[i] * gain * 0.85;
           }
         } else {
-          const gain = dbToLinear(Math.min(strongest.result.signalDb, 0));
+          const gain = dbToLinear(Math.min(strongest.signalDb, 0));
           for (let i = 0; i < output.length; i++) output[i] += strongest.audio[i] * gain;
         }
       }

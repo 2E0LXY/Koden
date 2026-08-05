@@ -150,6 +150,11 @@ const HEIGHT_REFERENCE_M = 12;
  * ~300km (all NVIS) and ~2300km (all DX).
  */
 export function antennaHeightGainDb(antenna: AntennaType, distanceKm: number): number {
+  // A vertical's takeoff angle is governed by its ground/radial system, not
+  // mast height the way a horizontally-polarized wire or beam's is -- a
+  // "low" vertical doesn't pick up the real NVIS advantage a low dipole
+  // does, so it sits out this height-driven DX/NVIS tradeoff entirely.
+  if (antenna.id === "vertical") return 0;
   const delta = antenna.heightM - HEIGHT_REFERENCE_M;
   const dxWeight = Math.max(0, Math.min(1, (distanceKm - 300) / 2000));
   const nvisWeight = 1 - dxWeight;

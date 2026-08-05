@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   findBand,
+  totalBandRangeKHz,
   antennaById,
   gridBearingDeg,
   isValidGrid,
@@ -399,19 +400,6 @@ export function App() {
     socketRef.current?.send({ type: "swr", swr });
   }, [joined, swr]);
 
-  // Squelch gating: mute/unmute based on current signal vs threshold, with the
-  // characteristic "tail" thump when it opens or closes.
-  useEffect(() => {
-    if (tunerActive) return;
-    const thresholdDb = meter.noiseFloorDb + rx.squelch * 4;
-    const open = rx.squelch === 0 || meter.sMeterDb >= thresholdDb;
-    audioEngineRef.current?.setSquelchOpen(open);
-    if (open !== squelchOpenRef.current) {
-      squelchOpenRef.current = open;
-      if (audioEngineRef.current) squelchTail();
-    }
-  }, [meter.sMeterDb, meter.noiseFloorDb, rx.squelch, tunerActive]);
-
   // What the S-meter/waterfall actually display: the raw over-the-air
   // signal adjusted for the receiver's own front-end sensitivity, so RF
   // GAIN/ATT/IPO visibly move the needle the same way they change what you
@@ -427,10 +415,29 @@ export function App() {
     [meter.noiseFloorDb, rfAdjustDb],
   );
 
+  // Squelch gating: mute/unmute based on current signal vs threshold, with the
+  // characteristic "tail" thump when it opens or closes. Gated on the same
+  // front-end-adjusted (ATT/IPO/RF-gain) values the S-meter itself shows --
+  // on a real rig, squelch sits downstream of the front-end pad, so engaging
+  // ATT genuinely makes it harder to break, the same way it visibly pulls
+  // the S-meter down, rather than only quieting audio the squelch can't see.
+  useEffect(() => {
+    if (tunerActive) return;
+    const thresholdDb = displayNoiseFloorDb + rx.squelch * 4;
+    const open = rx.squelch === 0 || displaySignalDb >= thresholdDb;
+    audioEngineRef.current?.setSquelchOpen(open);
+    if (open !== squelchOpenRef.current) {
+      squelchOpenRef.current = open;
+      if (audioEngineRef.current) squelchTail();
+    }
+  }, [displaySignalDb, displayNoiseFloorDb, rx.squelch, tunerActive]);
+
   const getLiveLevel = useCallback(
     () => audioEngineRef.current?.getRxLevel() ?? { rms: 0, peak: 0 },
     [],
   );
+
+  const getCompReductionDb = useCallback(() => audioEngineRef.current?.getCompReductionDb() ?? 0, []);
 
   // Push transmit state to the server whenever MOX or VOX-triggered state changes.
   const prevTransmittingRef = useRef(false);
@@ -588,7 +595,13 @@ export function App() {
       // (see stepFreq below), so it shouldn't silently overwrite whichever
       // memory is currently displayed.
       if (vfoMMode === "M") return;
-      setActiveVfoState((prev) => ({ ...prev, freqKHz }));
+      // The dial itself already clamps to the current band before ever
+      // calling this, but other callers -- direct keypad entry, waterfall
+      // click-to-tune -- don't, so an unclamped call here could otherwise
+      // set an unreachable "frequency" with no real band, desyncing every
+      // piece of UI that looks one up (mode buttons, band display, ...).
+      const [minKHz, maxKHz] = totalBandRangeKHz();
+      setActiveVfoState((prev) => ({ ...prev, freqKHz: Math.max(minKHz, Math.min(maxKHz, freqKHz)) }));
     },
     [vfoLocked, vfoMMode, setActiveVfoState],
   );
@@ -1027,6 +1040,7 @@ export function App() {
         onToggleComp={() => setCompEnabled((s) => !s)}
         procLevel={procLevel}
         onChangeProcLevel={setProcLevel}
+        getCompReductionDb={getCompReductionDb}
         moniLevel={moniLevel}
         onChangeMoniLevel={setMoniLevel}
         voxDelayKnob={voxDelayKnob}
