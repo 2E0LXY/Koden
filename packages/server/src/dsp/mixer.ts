@@ -516,7 +516,7 @@ export class MixerEngine {
         nightQrnBoostDb +
         antennaNoiseAdjustDb +
         directionalNoiseDb;
-      const noiseFrame = noiseGen.generate(FRAME_SAMPLES, effectiveNoiseFloorDb, crackleRateMultiplier);
+      const noiseFrame = noiseGen.generate(FRAME_SAMPLES, effectiveNoiseFloorDb, rx.freqKHz, crackleRateMultiplier);
 
       // FM's capture effect: once a signal is comfortably above the noise
       // floor, an FM detector locks on and background noise all but
