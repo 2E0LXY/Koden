@@ -15,6 +15,7 @@ import { RotatorCompass } from "./RotatorCompass.js";
 import { SetupPanel } from "./SetupPanel.js";
 import { FreqKeypad } from "./FreqKeypad.js";
 import { MemoryBank } from "./MemoryBank.js";
+import { FreqReadout } from "./FreqReadout.js";
 
 interface VfoDisplay {
   freqKHz: number;
@@ -87,6 +88,7 @@ interface RadioPanelProps {
   onSetTuneStep: (step: TuneStep) => void;
   onStepUp: () => void;
   onStepDown: () => void;
+  onStepFreq: (dir: 1 | -1, customStepKHz?: number) => void;
   onAutoTune: () => void;
 
   ritEnabled: boolean;
@@ -238,6 +240,7 @@ export function RadioPanel(props: RadioPanelProps) {
     onSetTuneStep,
     onStepUp,
     onStepDown,
+    onStepFreq,
     onAutoTune,
     ritEnabled,
     onToggleRit,
@@ -397,9 +400,11 @@ export function RadioPanel(props: RadioPanelProps) {
                 <span className="panel__mode-tag">{activeVfoState.mode}</span>
                 {vfoLocked && <span className="panel__mode-tag">LOCK</span>}
               </div>
-              <div className="panel__freq-main">
-                {keypadActive ? `${keypadBuffer}_` : formatFreq(activeVfoState.freqKHz)}
-              </div>
+              {keypadActive ? (
+                <div className="panel__freq-main">{`${keypadBuffer}_`}</div>
+              ) : (
+                <FreqReadout freqKHz={activeVfoState.freqKHz} onStep={onStepFreq} />
+              )}
               <div className="panel__display-row panel__display-row--secondary">
                 <span>
                   VFO-{activeVfo === "A" ? "B" : "A"} {otherVfo.mode}
@@ -763,7 +768,7 @@ export function RadioPanel(props: RadioPanelProps) {
 function formatFreq(freqKHz: number): string {
   const khz = Math.floor(freqKHz);
   const hz = Math.round((freqKHz - khz) * 1000);
-  return `${khz.toLocaleString()}.${hz.toString().padStart(3, "0")}`;
+  return `${khz.toLocaleString().replace(/,/g, ".")}.${hz.toString().padStart(3, "0")}`;
 }
 
 const MIN_TX_WATTS = 0.5;
