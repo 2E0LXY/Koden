@@ -63,18 +63,6 @@ const DEFAULT_RECEIVE_PARAMS: ReceiveParams = {
   afRfBalance: 5,
 };
 
-function makeSoftClipCurve(amount: number): Float32Array {
-  // amount 0 = transparent, 1 = aggressively limits peaks (noise-blanker-ish).
-  const n = 1024;
-  const curve = new Float32Array(n);
-  const k = 1 + amount * 40;
-  for (let i = 0; i < n; i++) {
-    const x = (i / (n - 1)) * 2 - 1;
-    curve[i] = Math.tanh(k * x) / Math.tanh(k);
-  }
-  return curve;
-}
-
 /**
  * A plain tanh curve: transparent (≈identity) for quiet audio, gracefully
  * saturating instead of hard-clipping for anything loud. Sits permanently
@@ -105,7 +93,7 @@ export class AudioEngine {
   private apfFilter: BiquadFilterNode | null = null;
   private widthFilter: BiquadFilterNode | null = null;
   private nrFilter: BiquadFilterNode | null = null;
-  private nbShaper: WaveShaperNode | null = null;
+  private nbCompressor: DynamicsCompressorNode | null = null;
   private agcCompressor: DynamicsCompressorNode | null = null;
   private rfGainNode: GainNode | null = null;
   private afGainNode: GainNode | null = null;
@@ -171,9 +159,20 @@ export class AudioEngine {
       frequency: 3800,
       Q: 0.707,
     });
-    this.nbShaper = new WaveShaperNode(context, {
-      curve: makeSoftClipCurve(0),
-      oversample: "2x",
+    // A real noise blanker gates out brief impulse spikes (ignition noise,
+    // switching hash) while leaving sustained content -- voice, CW, hiss --
+    // essentially untouched, which a static waveshaper curve can't do: it
+    // reshapes *every* sample the same way regardless of how long the peak
+    // lasts, so it ends up softly compressing wanted audio right along with
+    // the impulses. A very fast attack/release compressor is much closer to
+    // the real thing: it only pulls gain down for the brief instant a spike
+    // exceeds threshold and lets go again almost immediately afterward.
+    this.nbCompressor = new DynamicsCompressorNode(context, {
+      threshold: 0,
+      ratio: 1,
+      attack: 0.0005,
+      release: 0.004,
+      knee: 0,
     });
     this.agcCompressor = new DynamicsCompressorNode(context, {
       threshold: 0,
@@ -218,9 +217,15 @@ export class AudioEngine {
       .connect(this.apfFilter)
       .connect(this.widthFilter)
       .connect(this.nrFilter)
-      .connect(this.nbShaper)
-      .connect(this.agcCompressor)
+      .connect(this.nbCompressor)
+      // RF GAIN/ATT/IPO are a real receiver's front-end pad, sitting before
+      // the AGC detector -- backing them off mainly desensitizes weak
+      // signals (AGC can no longer bring them up to full output) while
+      // barely touching a signal that's already strong, rather than just
+      // turning down the volume on everything equally after AGC has already
+      // normalized it.
       .connect(this.rfGainNode)
+      .connect(this.agcCompressor)
       .connect(this.afGainNode)
       .connect(this.squelchGate)
       .connect(this.outputMakeupGain)
@@ -367,6 +372,17 @@ export class AudioEngine {
     this.compCompressor.ratio.value = 1 + t * 11;
   }
 
+  /**
+   * Real-time speech-processor gain reduction, dB (0 = no reduction right
+   * now, larger = compressing harder this instant) -- read straight off the
+   * compressor's own live `.reduction`, the same way getRxLevel reads real
+   * playback instead of a synthetic estimate, so the COMP meter actually
+   * swings with the operator's voice like a real ALC/COMP meter does.
+   */
+  getCompReductionDb(): number {
+    return this.compCompressor?.reduction ?? 0;
+  }
+
   setMicGain(level: number): void {
     this.currentMicGain = level;
     if (!this.micGainNode) return;
@@ -397,7 +413,7 @@ export class AudioEngine {
   private applyReceiveParams(): void {
     const p = this.params;
     if (!this.ifShiftFilter || !this.notchFilter || !this.apfFilter || !this.widthFilter || !this.nrFilter ||
-        !this.nbShaper || !this.agcCompressor || !this.rfGainNode || !this.afGainNode || !this.squelchGate) {
+        !this.nbCompressor || !this.agcCompressor || !this.rfGainNode || !this.afGainNode || !this.squelchGate) {
       return;
     }
 
@@ -422,8 +438,18 @@ export class AudioEngine {
     const dnrPull = p.dnrEnabled ? 900 : 0;
     this.nrFilter.frequency.value = Math.max(500, 4000 - (p.nrLevel / 10) * 3000 - dnrPull);
 
-    const nbAmount = p.nbLevel / 10 + (p.dnrEnabled ? 0.1 : 0);
-    this.nbShaper.curve = makeSoftClipCurve(Math.min(1, nbAmount)) as Float32Array<ArrayBuffer>;
+    const nbAmount = Math.min(1, p.nbLevel / 10 + (p.dnrEnabled ? 0.1 : 0));
+    if (nbAmount <= 0) {
+      this.nbCompressor.threshold.value = 0;
+      this.nbCompressor.ratio.value = 1;
+    } else {
+      // Lower threshold and higher ratio as the operator asks for more --
+      // catches progressively smaller/more frequent spikes, but the fast
+      // attack/release above (not this) is what keeps it acting only on
+      // brief impulses rather than sustained audio.
+      this.nbCompressor.threshold.value = -6 - nbAmount * 24;
+      this.nbCompressor.ratio.value = 8 + nbAmount * 12;
+    }
 
     if (p.agcMode === "OFF") {
       this.agcCompressor.threshold.value = 0;

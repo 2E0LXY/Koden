@@ -7,6 +7,8 @@ export interface Band {
   rangeKHz: [number, number];
   defaultMode: Mode;
   allowedModes: Mode[];
+  /** Some modes are only conventionally used across part of a band, not the whole allocation (e.g. 10m FM/AM sit in a narrow slice, not across the whole 28-29.7MHz band) -- informational only, doesn't hard-block selection elsewhere. */
+  modeSubBandKHz?: Partial<Record<Mode, [number, number]>>;
   /** Relative ionospheric absorption during daylight (0 = none, 1 = severe). Lower bands suffer more D-layer absorption by day. */
   daytimeAbsorption: number;
   /** Relative skip/DX potential at night (0 = poor, 1 = excellent). */
@@ -43,13 +45,33 @@ export const BANDS: Band[] = [
     name: "80 Meters",
     rangeKHz: [3500, 4000],
     defaultMode: "LSB",
-    allowedModes: ["LSB", "CW", "RTTY", "DATA"],
+    // Real hams do run AM in the US "AM window" around 3870-3890kHz, alongside the usual LSB/CW/digital traffic.
+    allowedModes: ["LSB", "CW", "AM", "RTTY", "DATA"],
     daytimeAbsorption: 0.85,
     nighttimeDx: 0.85,
     meteorScatterProne: false,
     baseNoiseFloorDb: -30,
     groundwaveRangeKm: 45,
     skipDistanceKm: 200,
+    sporadicEProne: false,
+  },
+  {
+    id: "60m",
+    name: "60 Meters",
+    // A real 60m allocation is channelized (5 fixed US channels spanning
+    // this range) rather than a contiguous tunable segment like the other
+    // bands, and power/mode rules are more restrictive -- modeled here as
+    // a simplified contiguous span covering that same overall range, since
+    // the band model doesn't represent discrete channels.
+    rangeKHz: [5330, 5405],
+    defaultMode: "USB",
+    allowedModes: ["USB", "CW", "DATA"],
+    daytimeAbsorption: 0.72,
+    nighttimeDx: 0.87,
+    meteorScatterProne: false,
+    baseNoiseFloorDb: -32,
+    groundwaveRangeKm: 40,
+    skipDistanceKm: 250,
     sporadicEProne: false,
   },
   {
@@ -142,6 +164,10 @@ export const BANDS: Band[] = [
     rangeKHz: [28000, 29700],
     defaultMode: "USB",
     allowedModes: ["USB", "CW", "FM", "AM", "RTTY", "DATA"],
+    // FM and AM are only conventionally used across a narrow slice of 10m --
+    // FM repeaters/simplex around 29.5-29.7MHz, the "AM window" around
+    // 29.0-29.2MHz -- not the whole band the way USB/CW/digital are.
+    modeSubBandKHz: { FM: [29500, 29700], AM: [29000, 29200] },
     daytimeAbsorption: 0.05,
     nighttimeDx: 0.05,
     meteorScatterProne: true,
@@ -198,4 +224,17 @@ export function nearestBand(freqKHz: number): Band {
 
 export function bandById(id: string): Band | undefined {
   return BANDS.find((b) => b.id === id);
+}
+
+/** Overall [low, high] kHz span covered by every defined band -- used to clamp free-form tuning (keypad entry, click-to-tune) to something within reach of any real allocation, without pinning it to whichever band happens to be active. */
+export function totalBandRangeKHz(): [number, number] {
+  return [Math.min(...BANDS.map((b) => b.rangeKHz[0])), Math.max(...BANDS.map((b) => b.rangeKHz[1]))];
+}
+
+/** Whether `mode` is conventionally used at `freqKHz` within `band` -- false either if the mode isn't used on this band at all, or if the band restricts it to a narrower conventional sub-range (e.g. 10m FM/AM) and freqKHz falls outside it. */
+export function isModeConventionalAt(band: Band, mode: Mode, freqKHz: number): boolean {
+  if (!band.allowedModes.includes(mode)) return false;
+  const sub = band.modeSubBandKHz?.[mode];
+  if (!sub) return true;
+  return freqKHz >= sub[0] && freqKHz <= sub[1];
 }

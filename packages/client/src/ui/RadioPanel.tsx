@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ANTENNAS, BANDS, antennaById, type AntennaId, type Band, type FilterWidth, type Mode, type StationInfo } from "@koden/shared";
+import { ANTENNAS, BANDS, antennaById, isModeConventionalAt, type AntennaId, type Band, type FilterWidth, type Mode, type StationInfo } from "@koden/shared";
 import type { AgcMode, ReceiveParams } from "../audio/engine.js";
 import type { TuneStep } from "../App.js";
 import { click } from "../audio/sfx.js";
@@ -149,6 +149,7 @@ interface RadioPanelProps {
   onToggleComp: () => void;
   procLevel: number;
   onChangeProcLevel: (v: number) => void;
+  getCompReductionDb?: () => number;
   moniLevel: number;
   onChangeMoniLevel: (v: number) => void;
   voxDelayKnob: number;
@@ -182,7 +183,6 @@ const MODE_BUTTONS: { label: string; mode: Mode }[] = [
   { label: "CW", mode: "CW" },
   { label: "AM", mode: "AM" },
   { label: "FM", mode: "FM" },
-  { label: "DIG", mode: "DATA" },
 ];
 
 export function RadioPanel(props: RadioPanelProps) {
@@ -292,6 +292,7 @@ export function RadioPanel(props: RadioPanelProps) {
     onToggleComp,
     procLevel,
     onChangeProcLevel,
+    getCompReductionDb,
     moniLevel,
     onChangeMoniLevel,
     voxDelayKnob,
@@ -388,7 +389,7 @@ export function RadioPanel(props: RadioPanelProps) {
               </span>
               <SMeter signalDb={signalDb} getLiveLevel={getLiveLevel} />
               <SwrBar swr={swr} tuning={tunerActive} />
-              <CompMeter enabled={compEnabled} level={procLevel} />
+              <CompMeter enabled={compEnabled} level={procLevel} getReductionDb={getCompReductionDb} />
               <WattMeter watts={txPower * txEnvelope} transmitting={transmitting} />
             </div>
 
@@ -585,15 +586,30 @@ export function RadioPanel(props: RadioPanelProps) {
         <div className="panel__center-col">
           <div className="panel__vfo-row">
             <div className="mode-col">
-              {MODE_BUTTONS.map(({ label, mode }) => (
-                <PanelButton
-                  key={label}
-                  label={label}
-                  active={activeVfoState.mode === mode}
-                  onClick={() => onModeSelect(mode)}
-                  title={band && !band.allowedModes.includes(mode) ? "Not typically used on this band" : undefined}
-                />
-              ))}
+              {MODE_BUTTONS.map(({ label, mode }) => {
+                const subBand = band?.modeSubBandKHz?.[mode];
+                const title =
+                  band && !band.allowedModes.includes(mode)
+                    ? "Not typically used on this band"
+                    : band && subBand && !isModeConventionalAt(band, mode, activeVfoState.freqKHz)
+                      ? `Conventionally used ${(subBand[0] / 1000).toFixed(3)}-${(subBand[1] / 1000).toFixed(3)} MHz on this band`
+                      : undefined;
+                return (
+                  <PanelButton
+                    key={label}
+                    label={label}
+                    active={activeVfoState.mode === mode}
+                    onClick={() => onModeSelect(mode)}
+                    title={title}
+                  />
+                );
+              })}
+              <PanelButton
+                label={activeVfoState.mode === "RTTY" ? "DIG:RTTY" : "DIG:DATA"}
+                active={activeVfoState.mode === "DATA" || activeVfoState.mode === "RTTY"}
+                onClick={() => onModeSelect(activeVfoState.mode === "DATA" ? "RTTY" : "DATA")}
+                title="Cycles DATA -> RTTY"
+              />
             </div>
 
             <div className="tuning-block">
@@ -624,7 +640,7 @@ export function RadioPanel(props: RadioPanelProps) {
               {BANDS.map((b) => (
                 <PanelButton
                   key={b.id}
-                  label={(b.rangeKHz[0] / 1000).toString().replace(/\.0$/, "")}
+                  label={b.id}
                   active={band?.id === b.id}
                   onClick={() => onBandSelect(b)}
                   title={b.name}
@@ -753,7 +769,7 @@ export function RadioPanel(props: RadioPanelProps) {
           </div>
 
           <div className="knob-row">
-            <Knob label="AF⇒RF" value={rx.afRfBalance} min={0} max={10} onChange={(v) => onUpdateRx({ afRfBalance: v })} title="Balances the S-meter/AGC between AF and RF gain response" />
+            <Knob label="AF⇒RF" value={rx.afRfBalance} min={0} max={10} onChange={(v) => onUpdateRx({ afRfBalance: v })} title="Overall RX gain trim -- scales AF and RF gain together; doesn't affect the S-meter or AGC" />
           </div>
         </div>
       </div>

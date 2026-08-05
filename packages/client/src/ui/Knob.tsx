@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { detent } from "../audio/sfx.js";
 
 interface KnobProps {
@@ -20,6 +20,27 @@ export function Knob({ label, value, min, max, onChange, format, size = "normal"
   const [dragging, setDragging] = useState(false);
   const dragStart = useRef<{ y: number; value: number } | null>(null);
   const lastDetentStep = useRef(0);
+  const dialRef = useRef<HTMLDivElement | null>(null);
+  const latest = useRef({ value, min, max, onChange });
+  latest.current = { value, min, max, onChange };
+
+  useEffect(() => {
+    const el = dialRef.current;
+    if (!el) return;
+    // React's synthetic onWheel is a passive listener, so preventDefault()
+    // inside it silently fails and the page scrolls underneath the cursor
+    // instead of just adjusting the knob -- a real, non-passive native
+    // listener is the only way to actually stop that native scroll.
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const { value, min, max, onChange } = latest.current;
+      const range = max - min;
+      const step = range / 40;
+      onChange(Math.max(min, Math.min(max, value - Math.sign(e.deltaY) * step)));
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, []);
 
   const normalized = (value - min) / (max - min);
   const angle = -SWEEP_DEG / 2 + normalized * SWEEP_DEG;
@@ -49,21 +70,14 @@ export function Knob({ label, value, min, max, onChange, format, size = "normal"
     setDragging(false);
   };
 
-  const onWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const range = max - min;
-    const step = range / 40;
-    onChange(Math.max(min, Math.min(max, value - Math.sign(e.deltaY) * step)));
-  };
-
   return (
     <div className={`knob knob--${size}`}>
       <div
+        ref={dialRef}
         className={`knob__dial ${dragging ? "knob__dial--active" : ""}`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onWheel={onWheel}
         onDoubleClick={onReset}
         title={title ?? (onReset ? "Double-click to reset" : undefined)}
       >

@@ -29,11 +29,20 @@ export const HelloMessage = z.object({
  * this station transmit on -- normally equal to `freqKHz`, but different
  * when operating split (transmitting on VFO B while listening on VFO A).
  */
+// Generous bounds around the full HF+6m amateur range (160m's 1800kHz low
+// edge to 6m's 54000kHz high edge, with slack either side for future band
+// additions) -- wide enough to never clip a legitimate tuning, but enough
+// to reject the kind of nonsense (negative, zero, or absurd values like 1e9)
+// that would otherwise get broadcast verbatim to every other listener's
+// roster and corrupt their waterfall/tuning display.
+const MIN_TUNE_FREQ_KHZ = 1_000;
+const MAX_TUNE_FREQ_KHZ = 60_000;
+
 export const TuneMessage = z.object({
   type: z.literal("tune"),
-  freqKHz: z.number().positive(),
+  freqKHz: z.number().min(MIN_TUNE_FREQ_KHZ).max(MAX_TUNE_FREQ_KHZ),
   mode: ModeSchema,
-  txFreqKHz: z.number().positive().optional(),
+  txFreqKHz: z.number().min(MIN_TUNE_FREQ_KHZ).max(MAX_TUNE_FREQ_KHZ).optional(),
   filterWidth: FilterWidthSchema.optional(),
 });
 
