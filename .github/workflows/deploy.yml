@@ -42,3 +42,12 @@ jobs:
           # secret whose contents this workflow doesn't control the shape of.
           ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" \
             "REPO_REF=$(printf '%q' "$DEPLOY_REF") ADDR='kodenradio.uk' ADDR_ALIASES='www.kodenradio.uk' GEMINI_API_KEY=$(printf '%q' "$GEMINI_API_KEY") bash /opt/koden/deploy/install.sh"
+
+      # TEMPORARY -- diagnosing a live M0AI/Gemini Live issue; remove before merging.
+      - name: Tail koden-server logs
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          SSH_HOST: ${{ secrets.VPS_HOST }}
+          SSH_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" "journalctl -u koden-server -n 100 --no-pager"
