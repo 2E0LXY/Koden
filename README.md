@@ -32,3 +32,10 @@ npm run dev:client   # starts the Vite dev server for the web UI
 
 The client expects the server's WebSocket endpoint at `VITE_SERVER_WS_URL`
 (defaults to `ws://localhost:8787/ws` in development).
+
+## Deployment
+
+Pushing to `main` triggers the `Deploy to VPS` GitHub Actions workflow
+(`.github/workflows/deploy.yml`), which SSHes into the VPS and runs the
+install/update script there. It can also be run manually from the Actions
+tab (`workflow_dispatch`), optionally against a specific branch/tag/commit.
