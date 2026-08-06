@@ -10,6 +10,7 @@ import {
   bandById,
   daylightFactor,
   nearestBand,
+  gridBearingDeg,
   gridToLatLon,
   localSolarHour,
 } from "@koden/shared";
@@ -35,7 +36,7 @@ import {
   MorseBeacon,
 } from "./beacon.js";
 import { PARROT_FREQ_KHZ, PARROT_ID, ParrotEcho } from "./parrot.js";
-import { AiStationEngine, M0AI_FREQ_KHZ, M0AI_ID, M0AI_SIGNAL_DB, type M0aiCaller } from "./aiStation.js";
+import { AiStationEngine, M0AI_FREQ_KHZ, M0AI_GRID, M0AI_ID, M0AI_SIGNAL_DB, type M0aiCaller } from "./aiStation.js";
 import {
   NUMBERS_STATION_FREQ_KHZ,
   NUMBERS_STATION_ID,
@@ -210,6 +211,25 @@ export class MixerEngine {
     return filter;
   }
 
+  /**
+   * M0AI has a real, fixed location (Leeds -- see M0AI_GRID) unlike the
+   * beacon/parrot/VOLMET/time-signal fixed references, which are
+   * deliberately location-agnostic calibration tools. So unlike those,
+   * working M0AI is location- and antenna-aware exactly like a real DX
+   * contact: a rotatable beam has to actually be pointed at the true
+   * bearing to Leeds to get its full gain, the same normalization already
+   * used for antenna-driven noise nulling below (antenna gain relative to
+   * its own peak, so non-rotatable antennas -- which ignore heading
+   * entirely -- always net to zero adjustment).
+   */
+  private m0aiSignalDbFor(rx: Station): number {
+    const antenna = antennaById(rx.antenna);
+    if (!antenna) return M0AI_SIGNAL_DB;
+    const bearingToM0ai = gridBearingDeg(rx.grid, M0AI_GRID);
+    const antennaAdjustDb = antennaGainDb(antenna, rx.headingDeg, bearingToM0ai) - antenna.gainDbi;
+    return M0AI_SIGNAL_DB + antennaAdjustDb;
+  }
+
   private getAiSsbShifter(rx: Station): SsbFrequencyShifter {
     const existing = this.aiSsbShifterByStation.get(rx.id);
     if (existing) return existing;
@@ -343,7 +363,6 @@ export class MixerEngine {
       .map((s) => ({ id: s.id, callsign: s.callsign, frame: m0aiFramesById.get(s.id) ?? null }));
     this.aiStation.tick(nowMs, keyedIntoM0ai);
     const m0aiFrame = this.aiStation.nextFrame();
-    const m0aiGain = dbToLinear(Math.min(M0AI_SIGNAL_DB, 0));
 
     // Same reasoning as the beacon above: the tick pattern is identical for
     // every listener, so it's computed once here; each listener still gets
@@ -453,13 +472,20 @@ export class MixerEngine {
       // M0AI: a single shared reply, audible to everyone tuned within its
       // passband at once -- exactly like a real pileup, where everyone
       // hears the DX station work whoever it's currently in a QSO with.
-      // Not routed through the propagation engine (no real transmitter
-      // position to model), so -- same as the parrot -- each listener gets
-      // their own independent multipath sweep rather than an identical,
-      // perfectly clean copy.
-      if (m0aiFrame && Math.abs(M0AI_FREQ_KHZ - rx.freqKHz) <= passbandKHz(rx.mode, rx.filterWidth) / 2) {
+      // Not routed through the propagation engine (no distance to model),
+      // but M0AI does have a real fixed location (Leeds), so unlike the
+      // other fixed references, its effective level is location- and
+      // antenna-aware per listener (see m0aiSignalDbFor) -- a beam pointed
+      // away from the true bearing can genuinely drop it below audibility,
+      // same as a real DX contact worked with the antenna pointed wrong.
+      const m0aiSignalDb = m0aiFrame ? this.m0aiSignalDbFor(rx) : -Infinity;
+      if (
+        m0aiFrame &&
+        m0aiSignalDb >= AUDIBLE_THRESHOLD_DB &&
+        Math.abs(M0AI_FREQ_KHZ - rx.freqKHz) <= passbandKHz(rx.mode, rx.filterWidth) / 2
+      ) {
         audibleIds.push(M0AI_ID);
-        peakSignalDb = Math.max(peakSignalDb, M0AI_SIGNAL_DB);
+        peakSignalDb = Math.max(peakSignalDb, m0aiSignalDb);
         const m0aiFiltered = m0aiFrame.slice();
         if (rx.mode === "USB" || rx.mode === "LSB") {
           const offsetHz = (rx.freqKHz - M0AI_FREQ_KHZ) * 1000;
@@ -468,8 +494,9 @@ export class MixerEngine {
         }
         this.getAiMultipathFilter(rx).processInPlace(m0aiFiltered, M0AI_MULTIPATH_DEPTH);
         if (rx.mode === "FM") {
-          fmCandidates.push({ id: M0AI_ID, signalDb: M0AI_SIGNAL_DB, audio: m0aiFiltered });
+          fmCandidates.push({ id: M0AI_ID, signalDb: m0aiSignalDb, audio: m0aiFiltered });
         } else {
+          const m0aiGain = dbToLinear(Math.min(m0aiSignalDb, 0));
           for (let i = 0; i < output.length; i++) output[i] += m0aiFiltered[i] * m0aiGain;
         }
       }
