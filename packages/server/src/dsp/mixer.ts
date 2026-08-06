@@ -35,6 +35,7 @@ import {
   MorseBeacon,
 } from "./beacon.js";
 import { PARROT_FREQ_KHZ, PARROT_ID, ParrotEcho } from "./parrot.js";
+import { AiStationEngine, M0AI_FREQ_KHZ, M0AI_ID, M0AI_SIGNAL_DB } from "./aiStation.js";
 import {
   NUMBERS_STATION_FREQ_KHZ,
   NUMBERS_STATION_ID,
@@ -112,6 +113,7 @@ export class MixerEngine {
   private tickCount = 0;
   private beacon = new MorseBeacon("KODEN BEACON", 10, 7);
   private parrot: ParrotEcho;
+  private aiStation = new AiStationEngine();
   private timeTicker = new TimeTicker();
   private timeOscByStation = new Map<string, BeaconToneOscillator>();
   private volmet: VoiceMurmur;
@@ -147,6 +149,7 @@ export class MixerEngine {
     this.timeOscByStation.delete(id);
     this.chirpVoiceByStation.delete(id);
     this.parrot.handleDisconnect(id, nowMs);
+    this.aiStation.onDisconnect(id);
   }
 
   private getTxBandwidthFilter(tx: Station): TxBandwidthFilter {
@@ -294,6 +297,32 @@ export class MixerEngine {
     const parrotFrame = this.parrot.nextFrame();
     const parrotGain = dbToLinear(Math.min(PARROT_SIGNAL_DB, 0));
 
+    // M0AI: unlike the parrot's single shared slot, every station gets its
+    // own independent Gemini Live conversation, so this drives one session
+    // per station rather than one shared piece of state. Every connected
+    // station (not just this tick's transmitters) needs a tick call so PTT
+    // release is caught promptly even on a tick with no fresh audio frame.
+    const inM0aiPassband = (s: { txFreqKHz: number; mode: Station["mode"]; filterWidth: Station["filterWidth"] }) =>
+      Math.abs(s.txFreqKHz - M0AI_FREQ_KHZ) <= passbandKHz(s.mode, s.filterWidth) / 2;
+    const m0aiFrameByStation = new Map<string, Float32Array>();
+    if (this.aiStation.enabled) {
+      for (const s of all) {
+        const keyed = s.transmitting && inM0aiPassband(s);
+        let frame: Float32Array | null = null;
+        if (keyed && s.pendingFrame) {
+          frame = new Float32Array(FRAME_SAMPLES);
+          int16ToFloat32(s.pendingFrame, frame);
+        }
+        this.aiStation.tick(s.id, nowMs, keyed, frame);
+      }
+      this.aiStation.sweepIdle(nowMs);
+      for (const s of all) {
+        const frame = this.aiStation.nextFrame(s.id);
+        if (frame) m0aiFrameByStation.set(s.id, frame);
+      }
+    }
+    const m0aiGain = dbToLinear(Math.min(M0AI_SIGNAL_DB, 0));
+
     // Same reasoning as the beacon above: the tick pattern is identical for
     // every listener, so it's computed once here; each listener still gets
     // their own oscillator for the beat-note pitch.
@@ -396,6 +425,21 @@ export class MixerEngine {
           for (let i = 0; i < staticFrame.length; i++) staticFrame[i] = parrotStatic.pink.next() * PARROT_STATIC_LEVEL;
           parrotStatic.crackle.fillAdd(staticFrame);
           for (let i = 0; i < output.length; i++) output[i] += staticFrame[i];
+        }
+      }
+
+      // M0AI: a private, per-station reply -- only the station that's
+      // actually in a QSO with it (m0aiFrameByStation is keyed by rx.id)
+      // ever gets audio here, unlike every other fixed station above whose
+      // single shared frame is audible to everyone tuned in at once.
+      const m0aiFrame = m0aiFrameByStation.get(rx.id);
+      if (m0aiFrame && Math.abs(M0AI_FREQ_KHZ - rx.freqKHz) <= passbandKHz(rx.mode, rx.filterWidth) / 2) {
+        audibleIds.push(M0AI_ID);
+        peakSignalDb = Math.max(peakSignalDb, M0AI_SIGNAL_DB);
+        if (rx.mode === "FM") {
+          fmCandidates.push({ id: M0AI_ID, signalDb: M0AI_SIGNAL_DB, audio: m0aiFrame });
+        } else {
+          for (let i = 0; i < output.length; i++) output[i] += m0aiFrame[i] * m0aiGain;
         }
       }
 
