@@ -53,7 +53,7 @@ All optional, set as environment variables before running:
 | `INSTALL_DIR`  | `/opt/koden`                      | Where the app lives on disk |
 | `NODE_MAJOR`   | `22`                               | Node.js major version to install |
 | `GEMINI_API_KEY` | none (M0AI off the air)         | Google Gemini API key -- enables M0AI, the AI QSO partner station (see below) |
-| `GEMINI_LIVE_MODEL` | `gemini-2.0-flash-live-001`  | Override the Gemini Live model M0AI uses |
+| `GEMINI_LIVE_MODEL` | `gemini-3.1-flash-live-preview`  | Override the Gemini Live model M0AI uses |
 
 If you have a real domain pointed at the VPS, set `ADDR=your.domain.com` to
 get a proper trusted certificate instead of the self-signed fallback. Koden

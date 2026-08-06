@@ -40,7 +40,7 @@
 #                else runs fine without it.
 #   GEMINI_LIVE_MODEL - override the Gemini Live model M0AI uses, in case
 #                the built-in default ever falls out of date (default:
-#                gemini-2.0-flash-live-001)
+#                gemini-3.1-flash-live-preview)
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then

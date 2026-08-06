@@ -28,7 +28,7 @@ export const M0AI_SIGNAL_DB = -18;
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "";
 /** Overridable in case this default ever falls out of date -- see deploy/README.md. */
-const GEMINI_MODEL = process.env.GEMINI_LIVE_MODEL || "gemini-2.0-flash-live-001";
+const GEMINI_MODEL = process.env.GEMINI_LIVE_MODEL || "gemini-3.1-flash-live-preview";
 const GEMINI_WS_URL = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${GEMINI_API_KEY}`;
 
 /** Gemini Live's documented input rate happens to equal this sim's own SAMPLE_RATE exactly -- uplink audio needs no resampling, only the 24kHz reply audio does. */
