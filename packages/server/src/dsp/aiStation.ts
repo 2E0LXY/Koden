@@ -150,8 +150,33 @@ class AiQsoSession {
     });
 
     ws.on("message", (data) => this.handleMessage(data));
-    ws.on("close", () => this.handleConnectionLost());
-    ws.on("error", () => this.handleConnectionLost());
+    ws.on("close", (code, reason) => {
+      console.log(`[m0ai] Gemini Live connection closed (${code}${reason.length ? ` ${reason.toString()}` : ""})`);
+      this.handleConnectionLost();
+    });
+    ws.on("error", (err) => {
+      console.error(`[m0ai] Gemini Live connection error: ${err.message}`);
+      this.handleConnectionLost();
+    });
+    // A rejected handshake (bad API key, unknown model, etc.) surfaces here,
+    // not via 'error' or 'close' -- the `ws` library treats it as a distinct
+    // terminal event and otherwise leaves the socket dangling indefinitely if
+    // nothing destroys it, which without this handler wedged the whole
+    // frequency open (capturedId stuck set, awaitingReply never resolving)
+    // until the process restarted.
+    ws.on("unexpected-response", (_req, res) => {
+      let body = "";
+      res.on("data", (chunk) => {
+        body += chunk;
+      });
+      res.on("end", () => {
+        console.error(
+          `[m0ai] Gemini Live handshake rejected: HTTP ${res.statusCode} ${res.statusMessage}${body ? ` -- ${body.slice(0, 500)}` : ""}`,
+        );
+      });
+      ws.terminate();
+      this.handleConnectionLost();
+    });
   }
 
   private handleConnectionLost(): void {
@@ -173,6 +198,7 @@ class AiQsoSession {
     }
 
     if (msg.setupComplete) {
+      console.log("[m0ai] Gemini Live setup complete");
       this.setupComplete = true;
       this.connectionState = "open";
       for (const m of this.pendingOutgoing) this.ws?.send(JSON.stringify(m));
@@ -249,6 +275,9 @@ class AiQsoSession {
       const still = keyed.find((k) => k.id === this.capturedId);
       if (still) {
         this.lastActivityMs = nowMs;
+        // No-op unless the connection dropped mid-QSO -- retries rather than
+        // silently dropping the rest of this transmission on the floor.
+        this.ensureConnected(nowMs);
         if (still.frame) this.sendAudio(still.frame);
       } else {
         // Released PTT (or disconnected) -- close their turn and wait for the reply.
