@@ -38,7 +38,8 @@ export class TimeTicker {
 
 export const VOLMET_ID = "volmet";
 export const VOLMET_CALLSIGN = "VOLMET";
-export const VOLMET_GRID = "EIDW";
+/** Maidenhead locator for Dublin Airport (EIDW, 53.42N -6.27W), the real-world VOLMET source this stands in for -- not the ICAO airport code itself, which isn't a valid grid locator and would silently fail isValidGrid everywhere a grid is expected (station map, rotator bearing/distance). */
+export const VOLMET_GRID = "IO63UK";
 export const VOLMET_FREQ_KHZ = 18100.0;
 export const VOLMET_SIGNAL_DB = -20;
 
