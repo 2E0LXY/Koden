@@ -65,10 +65,13 @@ ADDR_ALIASES=www.kodenradio.uk` -- see `.github/workflows/deploy.yml`.
 
 Set `GEMINI_API_KEY` (a [Google Gemini API key](https://aistudio.google.com/apikey))
 and Koden puts a real AI-operated station, M0AI, on the air on 20m
-(14275kHz USB) -- tune it in and key up, and you get a genuine live voice
-QSO via the [Gemini Live API](https://ai.google.dev/gemini-api/docs/live),
-not a scripted response. Every caller gets their own independent
-conversation. No key set, no M0AI -- everything else works exactly the
+(14275kHz USB) -- Alex, operating from Leeds -- tune it in and key up for a
+genuine live voice QSO via the [Gemini Live API](https://ai.google.dev/gemini-api/docs/live),
+not a scripted response. It's a single shared frequency, like a real DX
+station worked simplex: whoever it's currently in a QSO with is heard by
+everyone tuned in, and it follows [IARU Region 1's operating rules](https://www.iaru-r1.org/on-the-air/code-of-conduct/) --
+one caller at a time, correct callsigns both ways, no jumping in on someone
+else's exchange. No key set, no M0AI -- everything else works exactly the
 same either way, and the station simply doesn't show up on anyone's
 roster. See `packages/server/src/dsp/aiStation.ts`.
 
