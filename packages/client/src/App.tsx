@@ -16,6 +16,7 @@ import { AudioEngine, type AgcMode, type ReceiveParams } from "./audio/engine.js
 import { beep, detent, power, relay, setSfxEnabled, squelchTail, startRotor, stopRotor } from "./audio/sfx.js";
 import { JoinForm } from "./ui/JoinForm.js";
 import { StationsLogWindow } from "./ui/StationsLogWindow.js";
+import { WorldMap } from "./ui/WorldMap.js";
 import { RadioPanel } from "./ui/RadioPanel.js";
 
 /**
@@ -888,7 +889,8 @@ export function App() {
 
   return (
     <>
-      <StationsLogWindow roster={roster} ownId={ownId} audibleStationIds={meter.audibleStationIds} events={events} />
+      <StationsLogWindow roster={roster} ownId={ownId} audibleStationIds={meter.audibleStationIds} />
+      <WorldMap roster={roster} ownId={ownId} ownGrid={ownGrid} antenna={antenna} headingDeg={heading} />
       <RadioPanel
         callsign={callsign}
         connectionStatus={connectionStatus}

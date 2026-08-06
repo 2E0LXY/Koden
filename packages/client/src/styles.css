@@ -992,6 +992,47 @@ button {
   padding: 8px;
 }
 
+/* ---------- World station map ---------- */
+
+.world-map__body {
+  display: block;
+  padding: 8px;
+}
+.world-map__svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.world-map__ocean {
+  fill: #0c1420;
+}
+.world-map__graticule {
+  stroke: #16202c;
+  stroke-width: 0.5;
+}
+.world-map__land {
+  fill: #2e3a26;
+  stroke: #3f4f34;
+  stroke-width: 0.4;
+}
+.world-map__dot--self {
+  fill: #e8b84b;
+}
+.world-map__compass-ring {
+  fill: none;
+  stroke: #e8b84b;
+  stroke-width: 0.6;
+  opacity: 0.7;
+}
+.world-map__compass-ring--faint {
+  opacity: 0.35;
+}
+.world-map__heading-line {
+  stroke: #ff5a3a;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+
 /* ---------- Setup panel ---------- */
 
 .setup-panel {

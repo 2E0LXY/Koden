@@ -5,27 +5,26 @@ interface StationsLogWindowProps {
   roster: StationInfo[];
   ownId: string | null;
   audibleStationIds: string[];
-  events: string[];
 }
 
 const WINDOW_WIDTH = 340;
 
-// Defaults near the top-right corner of the viewport -- roughly over the
-// decorative nameplate photo rather than any live instrument. The panel
-// fills nearly the whole viewport at typical widths, so there's no truly
-// empty spot to default into, but overlapping a photo costs nothing
-// functionally. Computed from the viewport (not a fixed pixel guess) so it
-// stays sensible across different window sizes.
+// Defaults near the top-left corner of the viewport, clear of the radio
+// panel's own left-hand controls at typical widths. Computed from the
+// viewport (not a fixed pixel guess) so it stays sensible across different
+// window sizes.
 function defaultPos(): { x: number; y: number } {
-  return { x: Math.max(8, window.innerWidth - WINDOW_WIDTH - 20), y: 4 };
+  return { x: 8, y: 4 };
 }
 
 /**
- * The station roster and band log, in their own floating window instead of
- * fixed inside the radio body -- drag the title bar to move it anywhere on
- * screen, including out over the page margin next to the radio.
+ * The station roster, in its own floating window instead of fixed inside
+ * the radio body -- drag the title bar to move it anywhere on screen,
+ * including out over the page margin next to the radio. The band log used
+ * to share this window; it's parked for now (event tracking still runs in
+ * App.tsx, just not rendered here) rather than removed outright.
  */
-export function StationsLogWindow({ roster, ownId, audibleStationIds, events }: StationsLogWindowProps) {
+export function StationsLogWindow({ roster, ownId, audibleStationIds }: StationsLogWindowProps) {
   const [pos, setPos] = useState(defaultPos);
   const [collapsed, setCollapsed] = useState(false);
   const dragStart = useRef<{ x: number; y: number; posX: number; posY: number } | null>(null);
@@ -51,7 +50,7 @@ export function StationsLogWindow({ roster, ownId, audibleStationIds, events }: 
   return (
     <div className="float-win" style={{ left: pos.x, top: pos.y }}>
       <div className="float-win__titlebar" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
-        <span className="float-win__title">STATIONS &amp; LOG</span>
+        <span className="float-win__title">STATIONS ON FREQUENCY</span>
         <button
           type="button"
           className="float-win__collapse"
@@ -64,7 +63,6 @@ export function StationsLogWindow({ roster, ownId, audibleStationIds, events }: 
       {!collapsed && (
         <div className="float-win__body">
           <div className="panel__side-info">
-            <div className="panel__roster-title">STATIONS ON FREQ</div>
             <ul className="panel__roster">
               {roster.map((s) => (
                 <li
@@ -85,14 +83,6 @@ export function StationsLogWindow({ roster, ownId, audibleStationIds, events }: 
                 </li>
               ))}
               {roster.length === 0 && <li className="panel__roster-empty">No stations connected</li>}
-            </ul>
-          </div>
-          <div className="panel__side-info">
-            <div className="panel__log-title">BAND LOG</div>
-            <ul className="panel__log">
-              {events.map((e, i) => (
-                <li key={i}>{e}</li>
-              ))}
             </ul>
           </div>
         </div>
