@@ -922,8 +922,8 @@ button {
   gap: 4px;
 }
 .rotator__dial {
-  width: 128px;
-  height: 128px;
+  width: 152px;
+  height: 152px;
   touch-action: none;
   cursor: grab;
 }
@@ -931,15 +931,23 @@ button {
   cursor: default;
   opacity: 0.5;
 }
-.rotator__ring {
-  fill: #101013;
-  stroke: #3a3a3e;
+.rotator__tick {
+  stroke: #4a4a4e;
+  stroke-width: 1;
+}
+.rotator__tick--major {
+  stroke: #6a6a6e;
   stroke-width: 1.5;
 }
 .rotator__tick-label {
   fill: #a98a3f;
   font-size: 9px;
   font-family: "Courier New", monospace;
+}
+.rotator__tick-label--cardinal {
+  fill: #e8b84b;
+  font-size: 12px;
+  font-weight: 700;
 }
 .rotator__needle {
   stroke: #ff5a3a;
@@ -954,6 +962,14 @@ button {
   color: #e8b84b;
   font-size: 13px;
   letter-spacing: 1px;
+}
+.rotator__nudge-row {
+  display: flex;
+  gap: 6px;
+}
+.rotator__nudge-btn {
+  touch-action: none;
+  min-width: 56px;
 }
 
 /* ---------- Rotator/station-map overlay (rings, dots, labels shared with the rotator dial above) ---------- */
@@ -979,6 +995,17 @@ button {
 }
 .antenna-map__dot--tx {
   fill: #ff3b3b;
+  animation: antenna-map-flash 0.9s linear infinite;
+}
+@keyframes antenna-map-flash {
+  0%, 49% {
+    fill: #ff3b3b;
+    opacity: 1;
+  }
+  50%, 100% {
+    fill: #ffb3a8;
+    opacity: 0.35;
+  }
 }
 .antenna-map__label {
   fill: #999;
