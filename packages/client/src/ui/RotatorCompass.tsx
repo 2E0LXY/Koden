@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { gridBearingDeg, gridDistanceKm, isValidGrid, type StationInfo } from "@koden/shared";
+import { click } from "../audio/sfx.js";
 
 interface RotatorCompassProps {
   headingDeg: number;
@@ -13,17 +14,42 @@ interface RotatorCompassProps {
 }
 
 const CENTER = 100;
-const MAX_RADIUS = 82;
+/** Where station dots/distance rings live -- inside the tick/degree bezel. */
+const MAX_RADIUS = 60;
+const NEEDLE_LENGTH = 64;
+const TICK_INNER = 68;
+const TICK_MINOR_OUTER = 72;
+const TICK_MAJOR_OUTER = 77;
+const LABEL_RADIUS = 87;
+const CARDINAL_BY_DEG: Record<number, string> = { 0: "N", 90: "E", 180: "S", 270: "W" };
+/** Every 10 degrees, matching a real bezel-style rotator dial. */
+const TICK_DEGREES = Array.from({ length: 36 }, (_, i) => i * 10);
+
+/** Step per button press; holding repeats this every REPEAT_MS for a continuous slew. */
+const STEP_DEG = 5;
+const REPEAT_DELAY_MS = 350;
+const REPEAT_MS = 90;
 
 function radiusForDistance(distanceKm: number): number {
-  return Math.min(MAX_RADIUS, 12 + 24 * Math.log10(distanceKm + 1));
+  return Math.min(MAX_RADIUS, 10 + 16 * Math.log10(distanceKm + 1));
+}
+
+function pointOnCircle(radius: number, deg: number): { x: number; y: number } {
+  const rad = (deg * Math.PI) / 180;
+  return { x: CENTER + radius * Math.sin(rad), y: CENTER - radius * Math.cos(rad) };
 }
 
 /**
  * Combined rotator heading dial and station-position map: drag to slew the
- * beam, or click a plotted station to point straight at it. Distance rings
- * and station dots come from the same real bearing/distance math as the
- * old standalone station map, just layered onto the one compass widget.
+ * beam, click the CW/CCW buttons to nudge or hold to slew continuously
+ * (wrapping through the full 360 degrees, not clamped to any hemisphere),
+ * or click a plotted station to point straight at it. A numbered bezel ring
+ * (10-degree ticks, labelled every 30, cardinals at N/E/S/W) makes the
+ * current heading and any station's true bearing readable at a glance, the
+ * way a real rotator controller's dial is. Distance rings and station dots
+ * come from the same real bearing/distance math as the old standalone
+ * station map, just layered onto the one compass widget; stations currently
+ * transmitting flash so a live QSO is obvious without reading callsigns.
  */
 export function RotatorCompass({
   headingDeg,
@@ -36,6 +62,41 @@ export function RotatorCompass({
 }: RotatorCompassProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [dragging, setDragging] = useState(false);
+  const headingRef = useRef(headingDeg);
+  const repeatTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const repeatInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    headingRef.current = headingDeg;
+  }, [headingDeg]);
+
+  const clearRepeat = () => {
+    if (repeatTimeout.current !== null) {
+      clearTimeout(repeatTimeout.current);
+      repeatTimeout.current = null;
+    }
+    if (repeatInterval.current !== null) {
+      clearInterval(repeatInterval.current);
+      repeatInterval.current = null;
+    }
+  };
+  useEffect(() => clearRepeat, []);
+
+  const step = (dir: 1 | -1) => {
+    const next = ((headingRef.current + dir * STEP_DEG) % 360 + 360) % 360;
+    headingRef.current = next;
+    onChangeHeading(Math.round(next));
+  };
+
+  const startRepeat = (dir: 1 | -1) => {
+    if (disabled) return;
+    click();
+    step(dir);
+    clearRepeat();
+    repeatTimeout.current = setTimeout(() => {
+      repeatInterval.current = setInterval(() => step(dir), REPEAT_MS);
+    }, REPEAT_DELAY_MS);
+  };
 
   const angleFromEvent = (e: React.PointerEvent<SVGSVGElement>): number => {
     const svg = svgRef.current;
@@ -63,9 +124,7 @@ export function RotatorCompass({
     setDragging(false);
   };
 
-  const rad = (headingDeg * Math.PI) / 180;
-  const needleX = CENTER + (MAX_RADIUS + 8) * Math.sin(rad);
-  const needleY = CENTER - (MAX_RADIUS + 8) * Math.cos(rad);
+  const needleTip = pointOnCircle(NEEDLE_LENGTH, headingDeg);
 
   const validOwnGrid = isValidGrid(ownGrid);
   const others = roster.filter((s) => s.id !== ownId && isValidGrid(s.grid));
@@ -83,10 +142,38 @@ export function RotatorCompass({
         <circle cx={CENTER} cy={CENTER} r={MAX_RADIUS} className="antenna-map__ring" />
         <circle cx={CENTER} cy={CENTER} r={MAX_RADIUS * 0.66} className="antenna-map__ring antenna-map__ring--faint" />
         <circle cx={CENTER} cy={CENTER} r={MAX_RADIUS * 0.33} className="antenna-map__ring antenna-map__ring--faint" />
-        <text x={CENTER} y={20} className="antenna-map__compass-label" textAnchor="middle">N</text>
-        <text x={CENTER} y={186} className="antenna-map__compass-label" textAnchor="middle">S</text>
-        <text x={16} y={CENTER + 4} className="antenna-map__compass-label" textAnchor="middle">W</text>
-        <text x={184} y={CENTER + 4} className="antenna-map__compass-label" textAnchor="middle">E</text>
+
+        {TICK_DEGREES.map((deg) => {
+          const isMajor = deg % 30 === 0;
+          const p1 = pointOnCircle(TICK_INNER, deg);
+          const p2 = pointOnCircle(isMajor ? TICK_MAJOR_OUTER : TICK_MINOR_OUTER, deg);
+          return (
+            <line
+              key={`tick-${deg}`}
+              x1={p1.x}
+              y1={p1.y}
+              x2={p2.x}
+              y2={p2.y}
+              className={`rotator__tick ${isMajor ? "rotator__tick--major" : ""}`}
+            />
+          );
+        })}
+        {TICK_DEGREES.filter((deg) => deg % 30 === 0).map((deg) => {
+          const cardinal = CARDINAL_BY_DEG[deg];
+          const p = pointOnCircle(LABEL_RADIUS, deg);
+          return (
+            <text
+              key={`label-${deg}`}
+              x={p.x}
+              y={p.y}
+              className={cardinal ? "rotator__tick-label rotator__tick-label--cardinal" : "rotator__tick-label"}
+              textAnchor="middle"
+              dominantBaseline="middle"
+            >
+              {cardinal ?? deg}
+            </text>
+          );
+        })}
 
         {!disabled && (
           <>
@@ -95,7 +182,14 @@ export function RotatorCompass({
                 <path d="M0,0 L6,3 L0,6 Z" fill="currentColor" />
               </marker>
             </defs>
-            <line x1={CENTER} y1={CENTER} x2={needleX} y2={needleY} className="rotator__needle" markerEnd="url(#rotator-arrowhead)" />
+            <line
+              x1={CENTER}
+              y1={CENTER}
+              x2={needleTip.x}
+              y2={needleTip.y}
+              className="rotator__needle"
+              markerEnd="url(#rotator-arrowhead)"
+            />
           </>
         )}
 
@@ -104,9 +198,7 @@ export function RotatorCompass({
             const bearing = gridBearingDeg(ownGrid, s.grid);
             const distanceKm = gridDistanceKm(ownGrid, s.grid);
             const r = radiusForDistance(distanceKm);
-            const stationRad = (bearing * Math.PI) / 180;
-            const x = CENTER + r * Math.sin(stationRad);
-            const y = CENTER - r * Math.cos(stationRad);
+            const { x, y } = pointOnCircle(r, bearing);
             return (
               <g
                 key={s.id}
@@ -125,6 +217,32 @@ export function RotatorCompass({
         <circle cx={CENTER} cy={CENTER} r={4} className="rotator__hub" />
       </svg>
       <div className="rotator__heading">{disabled ? "OMNI" : `${Math.round(headingDeg).toString().padStart(3, "0")}°`}</div>
+      <div className="rotator__nudge-row">
+        <button
+          type="button"
+          className="panel-btn panel-btn--small rotator__nudge-btn"
+          disabled={disabled}
+          onPointerDown={() => startRepeat(-1)}
+          onPointerUp={clearRepeat}
+          onPointerLeave={clearRepeat}
+          onPointerCancel={clearRepeat}
+          title="Rotate counter-clockwise (hold to slew)"
+        >
+          ◄ CCW
+        </button>
+        <button
+          type="button"
+          className="panel-btn panel-btn--small rotator__nudge-btn"
+          disabled={disabled}
+          onPointerDown={() => startRepeat(1)}
+          onPointerUp={clearRepeat}
+          onPointerLeave={clearRepeat}
+          onPointerCancel={clearRepeat}
+          title="Rotate clockwise (hold to slew)"
+        >
+          CW ►
+        </button>
+      </div>
       {!validOwnGrid && <div className="antenna-map__note">Set a valid grid locator to see other stations.</div>}
     </div>
   );

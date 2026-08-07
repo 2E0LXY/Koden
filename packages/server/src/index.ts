@@ -15,9 +15,11 @@ import {
 import { StationManager, type Station } from "./stationManager.js";
 import { MixerEngine } from "./dsp/mixer.js";
 import { bufferToInt16Array } from "./dsp/pcm.js";
+import { loadSettings, saveSettings } from "./profileStore.js";
 import { getSolarConditions, startSolarDataRefresh } from "./dsp/solar.js";
 import { BEACON_CALLSIGN, BEACON_FREQ_KHZ, BEACON_GRID, BEACON_ID } from "./dsp/beacon.js";
 import { PARROT_CALLSIGN, PARROT_FREQ_KHZ, PARROT_GRID, PARROT_ID } from "./dsp/parrot.js";
+import { M0AI_CALLSIGN, M0AI_FREQ_KHZ, M0AI_GRID, M0AI_ID, isM0aiEnabled } from "./dsp/aiStation.js";
 import {
   TIME_STATION_CALLSIGN,
   TIME_STATION_FREQ_KHZ,
@@ -84,6 +86,19 @@ const VOLMET_STATION_INFO: StationInfo = {
   headingDeg: 0,
 };
 
+/** Roster placeholder like the parrot's -- "transmitting" doesn't track M0AI's actual per-caller reply state, just that it's a station you can work. */
+const M0AI_STATION_INFO: StationInfo = {
+  id: M0AI_ID,
+  callsign: M0AI_CALLSIGN,
+  grid: M0AI_GRID,
+  freqKHz: M0AI_FREQ_KHZ,
+  txFreqKHz: M0AI_FREQ_KHZ,
+  mode: "USB",
+  transmitting: false,
+  antenna: DEFAULT_ANTENNA,
+  headingDeg: 0,
+};
+
 function send(ws: WebSocket, message: ServerMessage): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify(message));
@@ -98,6 +113,9 @@ function broadcastRoster(): void {
     PARROT_STATION_INFO,
     TIME_STATION_INFO,
     VOLMET_STATION_INFO,
+    // Only advertised when a Gemini API key is actually configured -- no
+    // point listing a contact that can't reply.
+    ...(isM0aiEnabled() ? [M0AI_STATION_INFO] : []),
   ];
   for (const s of stations.all()) {
     send(s.ws, { type: "roster", stations: stationInfos });
@@ -142,6 +160,7 @@ const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 wss.on("connection", (ws) => {
   const id = randomUUID();
   let helloReceived = false;
+  let lastSettingsSaveAt = 0;
 
   ws.on("message", (data, isBinary) => {
     if (isBinary) {
@@ -190,6 +209,7 @@ wss.on("connection", (ws) => {
       stations.add(station);
       helloReceived = true;
       send(ws, { type: "welcome", id, serverTimeMs: Date.now() });
+      send(ws, { type: "settings", settings: loadSettings(station.callsign) });
       const { sfi, kp } = getSolarConditions();
       send(ws, { type: "solar", sfi, kp });
       broadcastRoster();
@@ -230,6 +250,13 @@ wss.on("connection", (ws) => {
       station.callsign = parsed.callsign.trim().toUpperCase();
       station.grid = parsed.grid.trim().toUpperCase();
       broadcastRoster();
+    } else if (parsed.type === "save_settings") {
+      // The client already debounces its own sends; this just guards
+      // against a misbehaving/malicious client hammering disk writes.
+      const now = Date.now();
+      if (now - lastSettingsSaveAt < 1000) return;
+      lastSettingsSaveAt = now;
+      saveSettings(station.callsign, parsed.settings);
     }
   });
 
@@ -259,4 +286,9 @@ setInterval(broadcastSolar, SOLAR_BROADCAST_MS);
 httpServer.listen(PORT, () => {
   console.log(`Koden server listening on :${PORT} (ws path /ws)`);
   console.log(`Bands: ${BANDS.map((b) => b.id).join(", ")}`);
+  console.log(
+    isM0aiEnabled()
+      ? `M0AI enabled on ${M0AI_FREQ_KHZ}kHz`
+      : "M0AI disabled (set GEMINI_API_KEY to enable)",
+  );
 });

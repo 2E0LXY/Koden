@@ -78,6 +78,93 @@ export const SwrMessage = z.object({
   swr: z.number().min(1).max(10),
 });
 
+export const AgcModeSchema = z.enum(["OFF", "FAST", "MID", "SLOW"]);
+export const NotchModeSchema = z.enum(["off", "manual", "auto"]);
+export const TuneStepSchema = z.enum(["FINE", "NORMAL", "COARSE", "FAST"]);
+
+export const ReceiveParamsSchema = z.object({
+  afGain: z.number(),
+  rfGain: z.number(),
+  squelch: z.number(),
+  nbLevel: z.number(),
+  nrLevel: z.number(),
+  notchDepth: z.number(),
+  notchFreqHz: z.number(),
+  notchWidth: z.number(),
+  notchMode: NotchModeSchema,
+  ifShiftHz: z.number(),
+  pbtQ: z.number(),
+  width: z.number(),
+  agcMode: AgcModeSchema,
+  attEnabled: z.boolean(),
+  ipoEnabled: z.boolean(),
+  apfEnabled: z.boolean(),
+  dnrEnabled: z.boolean(),
+  afRfBalance: z.number(),
+});
+
+export const VfoStateSchema = z.object({
+  freqKHz: z.number(),
+  mode: ModeSchema,
+});
+
+export const BandMemoryEntrySchema = VfoStateSchema.extend({
+  attEnabled: z.boolean(),
+  ipoEnabled: z.boolean(),
+});
+
+/**
+ * Everything about a station's setup worth remembering between sessions --
+ * VFOs, memory channels, receiver/transmit trims, antenna/rotator, and UI
+ * prefs. Deliberately excludes anything transient/session-only (roster,
+ * meter readings, PTT/VOX-active state, connection status, tuner-running
+ * animation, SWR, band-scan toggle) that wouldn't make sense to restore.
+ */
+export const SettingsSchema = z.object({
+  vfoA: VfoStateSchema,
+  vfoB: VfoStateSchema,
+  activeVfo: z.enum(["A", "B"]),
+  split: z.boolean(),
+  vfoLocked: z.boolean(),
+  tuneStep: TuneStepSchema,
+  ritEnabled: z.boolean(),
+  xitEnabled: z.boolean(),
+  offsetHz: z.number(),
+  pbt1Hz: z.number(),
+  pbt2Hz: z.number(),
+  filterWidth: FilterWidthSchema,
+  memory: z.array(VfoStateSchema.nullable()),
+  memIndex: z.number(),
+  vfoMMode: z.enum(["VFO", "M"]),
+  mox: z.boolean(),
+  vox: z.boolean(),
+  voxDelayKnob: z.number(),
+  voxGainKnob: z.number(),
+  rx: ReceiveParamsSchema,
+  compEnabled: z.boolean(),
+  procLevel: z.number(),
+  moniEnabled: z.boolean(),
+  moniLevel: z.number(),
+  micGain: z.number(),
+  txPower: z.number(),
+  keySpeed: z.number(),
+  dim: z.boolean(),
+  mScope: z.boolean(),
+  antenna: AntennaIdSchema,
+  heading: z.number(),
+  sfxEnabled: z.boolean(),
+  selectedMicId: z.string(),
+  selectedSpeakerId: z.string(),
+  bandMemory: z.record(z.string(), BandMemoryEntrySchema),
+});
+export type Settings = z.infer<typeof SettingsSchema>;
+
+/** Client -> server: persist this station's full setup, keyed by callsign. */
+export const SaveSettingsMessage = z.object({
+  type: z.literal("save_settings"),
+  settings: SettingsSchema,
+});
+
 export const ClientMessage = z.discriminatedUnion("type", [
   HelloMessage,
   TuneMessage,
@@ -86,6 +173,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   ProfileMessage,
   PowerMessage,
   SwrMessage,
+  SaveSettingsMessage,
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
@@ -143,6 +231,12 @@ export const ErrorMessage = z.object({
   message: z.string(),
 });
 
+/** Server -> client: this callsign's saved setup, if any was found (sent once, right after welcome). */
+export const SettingsMessage = z.object({
+  type: z.literal("settings"),
+  settings: SettingsSchema.nullable(),
+});
+
 export const ServerMessage = z.discriminatedUnion("type", [
   WelcomeMessage,
   RosterMessage,
@@ -150,5 +244,6 @@ export const ServerMessage = z.discriminatedUnion("type", [
   SolarMessage,
   BandEventMessage,
   ErrorMessage,
+  SettingsMessage,
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;

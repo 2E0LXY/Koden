@@ -52,12 +52,28 @@ All optional, set as environment variables before running:
 | `ADDR_ALIASES` | none                              | Comma-separated extra hostnames (e.g. a `www.` variant) that 301-redirect to `ADDR` -- each still gets its own real certificate |
 | `INSTALL_DIR`  | `/opt/koden`                      | Where the app lives on disk |
 | `NODE_MAJOR`   | `22`                               | Node.js major version to install |
+| `GEMINI_API_KEY` | none (M0AI off the air)         | Google Gemini API key -- enables M0AI, the AI QSO partner station (see below) |
+| `GEMINI_LIVE_MODEL` | `gemini-3.1-flash-live-preview`  | Override the Gemini Live model M0AI uses |
 
 If you have a real domain pointed at the VPS, set `ADDR=your.domain.com` to
 get a proper trusted certificate instead of the self-signed fallback. Koden
 is live at **https://kodenradio.uk** (with `https://www.kodenradio.uk`
 redirecting to it), deployed via `ADDR=kodenradio.uk
 ADDR_ALIASES=www.kodenradio.uk` -- see `.github/workflows/deploy.yml`.
+
+## M0AI (optional)
+
+Set `GEMINI_API_KEY` (a [Google Gemini API key](https://aistudio.google.com/apikey))
+and Koden puts a real AI-operated station, M0AI, on the air on 20m
+(14275kHz USB) -- Alex, operating from Leeds -- tune it in and key up for a
+genuine live voice QSO via the [Gemini Live API](https://ai.google.dev/gemini-api/docs/live),
+not a scripted response. It's a single shared frequency, like a real DX
+station worked simplex: whoever it's currently in a QSO with is heard by
+everyone tuned in, and it follows [IARU Region 1's operating rules](https://www.iaru-r1.org/on-the-air/code-of-conduct/) --
+one caller at a time, correct callsigns both ways, no jumping in on someone
+else's exchange. No key set, no M0AI -- everything else works exactly the
+same either way, and the station simply doesn't show up on anyone's
+roster. See `packages/server/src/dsp/aiStation.ts`.
 
 ## What it sets up
 
@@ -98,6 +114,8 @@ One-time setup, since this needs credentials only you should hold:
    - `VPS_USER` -- `root` (install.sh requires root)
    - `VPS_SSH_KEY` -- the full contents of `koden_deploy_key` (the private
      half -- never the `.pub` file)
+   - `GEMINI_API_KEY` -- optional, enables M0AI (see above); leave unset and
+     deploys still work fine, M0AI just stays off the air
 4. Delete the local `koden_deploy_key` / `koden_deploy_key.pub` files once
    both are in place; only the copies on the VPS and in GitHub's secret
    store are needed afterwards.

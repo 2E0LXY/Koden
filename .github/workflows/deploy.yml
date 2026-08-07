@@ -20,6 +20,9 @@ jobs:
           SSH_HOST: ${{ secrets.VPS_HOST }}
           SSH_USER: ${{ secrets.VPS_USER }}
           DEPLOY_REF: ${{ github.event.inputs.ref || 'main' }}
+          # Optional: enables the M0AI AI QSO station (see deploy/README.md).
+          # Deploys still succeed without it -- M0AI just stays off the air.
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           missing=""
           [ -z "$SSH_KEY" ] && missing="$missing VPS_SSH_KEY"
@@ -35,5 +38,7 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
+          # Shell-quoted (not just interpolated) since GEMINI_API_KEY is a
+          # secret whose contents this workflow doesn't control the shape of.
           ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" \
-            "REPO_REF='$DEPLOY_REF' ADDR='kodenradio.uk' ADDR_ALIASES='www.kodenradio.uk' bash /opt/koden/deploy/install.sh"
+            "REPO_REF=$(printf '%q' "$DEPLOY_REF") ADDR='kodenradio.uk' ADDR_ALIASES='www.kodenradio.uk' GEMINI_API_KEY=$(printf '%q' "$GEMINI_API_KEY") bash /opt/koden/deploy/install.sh"

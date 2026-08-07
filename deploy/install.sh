@@ -34,6 +34,13 @@
 #                "www." variant) that should 301-redirect to ADDR. Each gets
 #                its own real Let's Encrypt certificate too.
 #   NODE_MAJOR - Node.js major version to install (default: 22)
+#   GEMINI_API_KEY - Google Gemini API key, enables the M0AI AI QSO partner
+#                station (see packages/server/src/dsp/aiStation.ts). Left
+#                unset, M0AI simply doesn't come on the air -- everything
+#                else runs fine without it.
+#   GEMINI_LIVE_MODEL - override the Gemini Live model M0AI uses, in case
+#                the built-in default ever falls out of date (default:
+#                gemini-3.1-flash-live-preview)
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
@@ -46,6 +53,8 @@ REPO_REF="${REPO_REF:-main}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/koden}"
 ADDR_ALIASES="${ADDR_ALIASES:-}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
+GEMINI_API_KEY="${GEMINI_API_KEY:-}"
+GEMINI_LIVE_MODEL="${GEMINI_LIVE_MODEL:-}"
 SERVICE_USER="koden"
 NODE_PORT="8787"
 
@@ -139,6 +148,13 @@ VITE_SERVER_WS_URL="wss://${ADDR}/ws" npm run build --workspace=packages/client
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 
 log "Writing systemd service"
+# Only written when actually set -- an empty Environment=GEMINI_API_KEY= line
+# would work fine too (aiStation.ts treats an empty key as "disabled" the
+# same as an unset one), but omitting it entirely keeps the unit file honest
+# about whether M0AI is configured on this box.
+AI_ENV_LINES=""
+[[ -n "$GEMINI_API_KEY" ]] && AI_ENV_LINES+=$'\n'"Environment=GEMINI_API_KEY=${GEMINI_API_KEY}"
+[[ -n "$GEMINI_LIVE_MODEL" ]] && AI_ENV_LINES+=$'\n'"Environment=GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL}"
 cat > /etc/systemd/system/koden-server.service <<EOF
 [Unit]
 Description=Koden virtual HF transceiver server
@@ -150,7 +166,7 @@ User=${SERVICE_USER}
 WorkingDirectory=${INSTALL_DIR}/packages/server
 ExecStart=$(command -v node) dist/index.js
 Environment=PORT=${NODE_PORT}
-Environment=NODE_ENV=production
+Environment=NODE_ENV=production${AI_ENV_LINES}
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=true
@@ -228,6 +244,11 @@ else
 fi
 if [[ -n "$ADDR_ALIASES" ]]; then
   echo "Redirecting to it from: $ADDR_ALIASES"
+fi
+if [[ -n "$GEMINI_API_KEY" ]]; then
+  echo "M0AI is on the air."
+else
+  echo "M0AI is off the air (no GEMINI_API_KEY set)."
 fi
 echo
 echo "Logs:      journalctl -u koden-server -f"

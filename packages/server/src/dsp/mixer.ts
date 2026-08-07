@@ -10,6 +10,7 @@ import {
   bandById,
   daylightFactor,
   nearestBand,
+  gridBearingDeg,
   gridToLatLon,
   localSolarHour,
 } from "@koden/shared";
@@ -35,6 +36,7 @@ import {
   MorseBeacon,
 } from "./beacon.js";
 import { PARROT_FREQ_KHZ, PARROT_ID, ParrotEcho } from "./parrot.js";
+import { AiStationEngine, M0AI_FREQ_KHZ, M0AI_GRID, M0AI_ID, M0AI_SIGNAL_DB, type M0aiCaller } from "./aiStation.js";
 import {
   NUMBERS_STATION_FREQ_KHZ,
   NUMBERS_STATION_ID,
@@ -75,6 +77,8 @@ const PARROT_MULTIPATH_DEPTH = 0.22;
  * it happens to sit on, not a clean local file with a faint wobble on top.
  */
 const PARROT_STATIC_LEVEL = 0.09;
+/** Same reasoning as the parrot's fixed multipath: M0AI isn't routed through the propagation engine either (no real transmitter position to model), but a perfectly clean, identical-for-everyone voice would undercut the "you're on the radio" illusion. */
+const M0AI_MULTIPATH_DEPTH = 0.2;
 
 const AUDIBLE_THRESHOLD_DB = -38;
 const METER_EVERY_N_TICKS = 4;
@@ -103,6 +107,10 @@ export class MixerEngine {
   private beaconOscByStation = new Map<string, BeaconToneOscillator>();
   /** One independent multipath sweep per listener, so the parrot's playback -- like a real transmission -- doesn't reach every listener as an identical, perfectly clean copy. */
   private parrotMultipathByStation = new Map<string, MultipathFilter>();
+  /** Same idea, one independent sweep per listener of M0AI's shared reply audio. */
+  private aiMultipathByStation = new Map<string, MultipathFilter>();
+  /** M0AI has a fixed nominal frequency like the beacon/time station, so listeners tuned slightly off it get the same SSB detuning shift a real transmission would produce -- keyed by listener alone (not a tx:rx pair) since M0AI's own frequency never varies. */
+  private aiSsbShifterByStation = new Map<string, SsbFrequencyShifter>();
   /** One independent hiss/crackle generator per listener backing the parrot's own always-present static -- see PARROT_STATIC_LEVEL. */
   private parrotStaticByStation = new Map<string, { pink: PinkNoise; crackle: AtmosphericCrackle }>();
   /** One oscillator per (station, band, spur index), so its phase stays continuous while a listener sits tuned near a spur. */
@@ -112,6 +120,7 @@ export class MixerEngine {
   private tickCount = 0;
   private beacon = new MorseBeacon("KODEN BEACON", 10, 7);
   private parrot: ParrotEcho;
+  private aiStation = new AiStationEngine();
   private timeTicker = new TimeTicker();
   private timeOscByStation = new Map<string, BeaconToneOscillator>();
   private volmet: VoiceMurmur;
@@ -144,9 +153,12 @@ export class MixerEngine {
     this.beaconOscByStation.delete(id);
     this.parrotMultipathByStation.delete(id);
     this.parrotStaticByStation.delete(id);
+    this.aiMultipathByStation.delete(id);
+    this.aiSsbShifterByStation.delete(id);
     this.timeOscByStation.delete(id);
     this.chirpVoiceByStation.delete(id);
     this.parrot.handleDisconnect(id, nowMs);
+    this.aiStation.onDisconnect(id);
   }
 
   private getTxBandwidthFilter(tx: Station): TxBandwidthFilter {
@@ -189,6 +201,41 @@ export class MixerEngine {
     const filter = new MultipathFilter(this.sampleRate);
     this.parrotMultipathByStation.set(rx.id, filter);
     return filter;
+  }
+
+  private getAiMultipathFilter(rx: Station): MultipathFilter {
+    const existing = this.aiMultipathByStation.get(rx.id);
+    if (existing) return existing;
+    const filter = new MultipathFilter(this.sampleRate);
+    this.aiMultipathByStation.set(rx.id, filter);
+    return filter;
+  }
+
+  /**
+   * M0AI has a real, fixed location (Leeds -- see M0AI_GRID) unlike the
+   * beacon/parrot/VOLMET/time-signal fixed references, which are
+   * deliberately location-agnostic calibration tools. So unlike those,
+   * working M0AI is location- and antenna-aware exactly like a real DX
+   * contact: a rotatable beam has to actually be pointed at the true
+   * bearing to Leeds to get its full gain, the same normalization already
+   * used for antenna-driven noise nulling below (antenna gain relative to
+   * its own peak, so non-rotatable antennas -- which ignore heading
+   * entirely -- always net to zero adjustment).
+   */
+  private m0aiSignalDbFor(rx: Station): number {
+    const antenna = antennaById(rx.antenna);
+    if (!antenna) return M0AI_SIGNAL_DB;
+    const bearingToM0ai = gridBearingDeg(rx.grid, M0AI_GRID);
+    const antennaAdjustDb = antennaGainDb(antenna, rx.headingDeg, bearingToM0ai) - antenna.gainDbi;
+    return M0AI_SIGNAL_DB + antennaAdjustDb;
+  }
+
+  private getAiSsbShifter(rx: Station): SsbFrequencyShifter {
+    const existing = this.aiSsbShifterByStation.get(rx.id);
+    if (existing) return existing;
+    const shifter = new SsbFrequencyShifter(this.sampleRate);
+    this.aiSsbShifterByStation.set(rx.id, shifter);
+    return shifter;
   }
 
   private getParrotStatic(rx: Station): { pink: PinkNoise; crackle: AtmosphericCrackle } {
@@ -294,6 +341,29 @@ export class MixerEngine {
     const parrotFrame = this.parrot.nextFrame();
     const parrotGain = dbToLinear(Math.min(PARROT_SIGNAL_DB, 0));
 
+    // M0AI: a single shared frequency, like a real DX station worked
+    // simplex -- whoever it's currently in a QSO with is heard by everyone
+    // tuned in, and IARU pileup etiquette (never call before an ongoing QSO
+    // finishes) means anyone else keyed up this tick just isn't heard yet.
+    // Built the same two-part way as the parrot's keyed/frame sets: "still
+    // keyed" is tracked separately from "has a fresh frame this tick" so a
+    // single missed frame (network/scheduling jitter) can't be mistaken for
+    // a PTT release.
+    const inM0aiPassband = (s: { txFreqKHz: number; mode: Station["mode"]; filterWidth: Station["filterWidth"] }) =>
+      Math.abs(s.txFreqKHz - M0AI_FREQ_KHZ) <= passbandKHz(s.mode, s.filterWidth) / 2;
+    const m0aiFramesById = new Map<string, Float32Array>();
+    for (const tx of transmitters) {
+      if (!inM0aiPassband(tx)) continue;
+      const frame = new Float32Array(FRAME_SAMPLES);
+      int16ToFloat32(tx.pendingFrame!, frame);
+      m0aiFramesById.set(tx.id, frame);
+    }
+    const keyedIntoM0ai: M0aiCaller[] = all
+      .filter((s) => s.transmitting && inM0aiPassband(s))
+      .map((s) => ({ id: s.id, callsign: s.callsign, frame: m0aiFramesById.get(s.id) ?? null }));
+    this.aiStation.tick(nowMs, keyedIntoM0ai);
+    const m0aiFrame = this.aiStation.nextFrame();
+
     // Same reasoning as the beacon above: the tick pattern is identical for
     // every listener, so it's computed once here; each listener still gets
     // their own oscillator for the beat-note pitch.
@@ -396,6 +466,38 @@ export class MixerEngine {
           for (let i = 0; i < staticFrame.length; i++) staticFrame[i] = parrotStatic.pink.next() * PARROT_STATIC_LEVEL;
           parrotStatic.crackle.fillAdd(staticFrame);
           for (let i = 0; i < output.length; i++) output[i] += staticFrame[i];
+        }
+      }
+
+      // M0AI: a single shared reply, audible to everyone tuned within its
+      // passband at once -- exactly like a real pileup, where everyone
+      // hears the DX station work whoever it's currently in a QSO with.
+      // Not routed through the propagation engine (no distance to model),
+      // but M0AI does have a real fixed location (Leeds), so unlike the
+      // other fixed references, its effective level is location- and
+      // antenna-aware per listener (see m0aiSignalDbFor) -- a beam pointed
+      // away from the true bearing can genuinely drop it below audibility,
+      // same as a real DX contact worked with the antenna pointed wrong.
+      const m0aiSignalDb = m0aiFrame ? this.m0aiSignalDbFor(rx) : -Infinity;
+      if (
+        m0aiFrame &&
+        m0aiSignalDb >= AUDIBLE_THRESHOLD_DB &&
+        Math.abs(M0AI_FREQ_KHZ - rx.freqKHz) <= passbandKHz(rx.mode, rx.filterWidth) / 2
+      ) {
+        audibleIds.push(M0AI_ID);
+        peakSignalDb = Math.max(peakSignalDb, m0aiSignalDb);
+        const m0aiFiltered = m0aiFrame.slice();
+        if (rx.mode === "USB" || rx.mode === "LSB") {
+          const offsetHz = (rx.freqKHz - M0AI_FREQ_KHZ) * 1000;
+          const shiftHz = rx.mode === "USB" ? -offsetHz : offsetHz;
+          this.getAiSsbShifter(rx).processInPlace(m0aiFiltered, shiftHz);
+        }
+        this.getAiMultipathFilter(rx).processInPlace(m0aiFiltered, M0AI_MULTIPATH_DEPTH);
+        if (rx.mode === "FM") {
+          fmCandidates.push({ id: M0AI_ID, signalDb: m0aiSignalDb, audio: m0aiFiltered });
+        } else {
+          const m0aiGain = dbToLinear(Math.min(m0aiSignalDb, 0));
+          for (let i = 0; i < output.length; i++) output[i] += m0aiFiltered[i] * m0aiGain;
         }
       }
 
