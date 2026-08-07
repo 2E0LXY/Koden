@@ -6,6 +6,19 @@ server over the same WebSocket protocol the browser client uses
 (`packages/shared/src/protocol.ts`) -- the server needs no changes to
 support this client.
 
+## Download
+
+Built by [`desktop-build.yml`](../../.github/workflows/desktop-build.yml)
+and published on the repo's
+[Releases page](https://github.com/2E0LXY/Koden/releases) as
+`koden-desktop_<version>_amd64.deb` (Debian/Ubuntu, verified installed +
+run on this exact package in CI) and `koden-desktop-<version>-win64.zip`
+(Windows, MSVC build -- compiles and passes the network smoke test in CI,
+but hasn't been run on a real Windows desktop by a human yet, so if
+anything looks off visually, that's why). Read the phase-1 scope below
+before expecting a finished radio panel -- right now it's a connection
+status window, nothing more.
+
 ## Status: phase 1 of ~3 -- network layer only
 
 This is the first slice of a multi-week effort, scoped deliberately small so
@@ -86,3 +99,18 @@ server:
 ```sh
 ./apps/desktop/build/koden_net_smoketest wss://kodenradio.uk/ws M0TEST IO91WM
 ```
+
+### Packaging
+
+```sh
+cd apps/desktop/build
+cpack -G DEB   # Linux -> koden-desktop_<version>_amd64.deb
+cpack -G ZIP   # Windows -> koden-desktop-<version>-win64.zip
+```
+
+The `.deb`'s dependency list is a mix of auto-detected (`dpkg-shlibdeps`,
+for what's actually dynamically linked -- OpenSSL, freetype, fontconfig,
+libstdc++, zlib) and hand-added (X11: JUCE `dlopen()`s it rather than
+linking directly, so `dpkg-shlibdeps` can't see it). ALSA isn't declared
+yet since phase 1 never opens an audio device -- revisit once phase 2
+adds real mic/speaker I/O.

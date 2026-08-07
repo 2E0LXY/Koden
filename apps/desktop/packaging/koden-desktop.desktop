@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Koden Desktop
+Comment=Native desktop client for the Koden virtual HF radio simulator
+Exec=koden-desktop
+Terminal=false
+Categories=Network;HamRadio;

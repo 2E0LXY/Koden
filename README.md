@@ -27,11 +27,15 @@ same callsign, from any browser or device.
 web client runs in any modern browser (mic access required for
 transmitting).
 
-**Native desktop (Windows / Debian):** in progress, see
-[`apps/desktop`](apps/desktop/README.md) — a genuinely native JUCE/C++
-client (not a browser wrapper) that talks to the same server over the same
-protocol. It's not packaged as a downloadable installer yet; for now it's
-build-from-source only (instructions in that README).
+**Native desktop (Windows / Debian):** early-stage, download from the
+[Releases page](https://github.com/2E0LXY/Koden/releases) — a genuinely
+native JUCE/C++ client (not a browser wrapper) that talks to the same
+server over the same protocol. It's currently a network/status window
+only (no audio, no radio panel yet — see
+[`apps/desktop`](apps/desktop/README.md) for what's actually implemented
+so far). The `.deb` has been installed and run in CI; the Windows build
+compiles and passes its network test in CI but hasn't been run on a real
+Windows machine yet.
 
 ## Packages
 
