@@ -103,6 +103,8 @@ class AiQsoSession {
 
   /** The station M0AI is currently listening to, if any -- null means the frequency is free for the next caller. */
   private capturedId: string | null = null;
+  /** Real mic frames actually forwarded to Gemini during the current capture -- logged on release; zero is the tell for a client-side audio problem rather than a Gemini/network one. */
+  private framesSentThisCapture = 0;
   /** Set once that station's turn is closed off (PTT released/disconnected); cleared once Gemini's reply is fully generated. While true, the frequency stays occupied even though capturedId is already null. */
   private awaitingReply = false;
   private lastActivityMs = 0;
@@ -255,6 +257,7 @@ class AiQsoSession {
   }
 
   private sendAudio(frame: Float32Array): void {
+    this.framesSentThisCapture++;
     const int16 = float32ToInt16(frame);
     const b64 = Buffer.from(int16.buffer, int16.byteOffset, int16.byteLength).toString("base64");
     this.send({ realtimeInput: { audio: { data: b64, mimeType: `audio/pcm;rate=${GEMINI_INPUT_RATE}` } } });
@@ -281,6 +284,9 @@ class AiQsoSession {
         if (still.frame) this.sendAudio(still.frame);
       } else {
         // Released PTT (or disconnected) -- close their turn and wait for the reply.
+        console.log(
+          `[m0ai] Call ended: ${this.framesSentThisCapture} audio frames forwarded (~${(this.framesSentThisCapture * 20) / 1000}s)${this.framesSentThisCapture === 0 ? " -- WARNING: zero frames received, likely a client-side mic/PTT issue, not Gemini" : ""}`,
+        );
         this.send({ realtimeInput: { activityEnd: {} } });
         this.capturedId = null;
         this.awaitingReply = true;
@@ -294,6 +300,8 @@ class AiQsoSession {
     const next = keyed[0];
     if (!next) return;
 
+    console.log(`[m0ai] Claimed caller ${next.callsign} (connection state: ${this.connectionState})`);
+    this.framesSentThisCapture = 0;
     this.ensureConnected(nowMs);
     this.capturedId = next.id;
     this.lastActivityMs = nowMs;
