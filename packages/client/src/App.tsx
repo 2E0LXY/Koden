@@ -9,6 +9,7 @@ import {
   type Band,
   type FilterWidth,
   type Mode,
+  type Settings,
   type StationInfo,
 } from "@koden/shared";
 import { KodenSocket, type ConnectionStatus } from "./net/wsClient.js";
@@ -192,6 +193,11 @@ export function App() {
   const [solar, setSolar] = useState<{ sfi: number; kp: number } | null>(null);
   const [meter, setMeter] = useState({ sMeterDb: -95, noiseFloorDb: -70, audibleStationIds: [] as string[] });
   const [events, setEvents] = useState<string[]>([]);
+  // Flips true once the server has told us whether this callsign has a saved
+  // setup (even "no, nothing saved") -- gates the save-on-change effect below
+  // so it can't fire on the transient default state during the brief window
+  // before that reply arrives and stomp on a real saved profile.
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
 
   const socketRef = useRef<KodenSocket | null>(null);
   const audioEngineRef = useRef<AudioEngine | null>(null);
@@ -268,7 +274,126 @@ export function App() {
     return () => navigator.mediaDevices.removeEventListener("devicechange", refreshDevices);
   }, [refreshDevices]);
 
+  /** Assemble the current setup into the shape persisted server-side, keyed by callsign. */
+  const buildSettings = useCallback(
+    (): Settings => ({
+      vfoA,
+      vfoB,
+      activeVfo,
+      split,
+      vfoLocked,
+      tuneStep,
+      ritEnabled,
+      xitEnabled,
+      offsetHz,
+      pbt1Hz,
+      pbt2Hz,
+      filterWidth,
+      memory,
+      memIndex,
+      vfoMMode,
+      mox,
+      vox,
+      voxDelayKnob,
+      voxGainKnob,
+      rx,
+      compEnabled,
+      procLevel,
+      moniEnabled,
+      moniLevel,
+      micGain,
+      txPower,
+      keySpeed,
+      dim,
+      mScope,
+      antenna,
+      heading,
+      sfxEnabled,
+      selectedMicId,
+      selectedSpeakerId,
+      bandMemory,
+    }),
+    [
+      vfoA,
+      vfoB,
+      activeVfo,
+      split,
+      vfoLocked,
+      tuneStep,
+      ritEnabled,
+      xitEnabled,
+      offsetHz,
+      pbt1Hz,
+      pbt2Hz,
+      filterWidth,
+      memory,
+      memIndex,
+      vfoMMode,
+      mox,
+      vox,
+      voxDelayKnob,
+      voxGainKnob,
+      rx,
+      compEnabled,
+      procLevel,
+      moniEnabled,
+      moniLevel,
+      micGain,
+      txPower,
+      keySpeed,
+      dim,
+      mScope,
+      antenna,
+      heading,
+      sfxEnabled,
+      selectedMicId,
+      selectedSpeakerId,
+      bandMemory,
+    ],
+  );
+
+  /** Restore a saved setup from the server, applied once right after join. */
+  const applySettings = useCallback((s: Settings) => {
+    setVfoA(s.vfoA);
+    setVfoB(s.vfoB);
+    setActiveVfo(s.activeVfo);
+    setSplit(s.split);
+    setVfoLocked(s.vfoLocked);
+    setTuneStep(s.tuneStep);
+    setRitEnabled(s.ritEnabled);
+    setXitEnabled(s.xitEnabled);
+    setOffsetHz(s.offsetHz);
+    setPbt1Hz(s.pbt1Hz);
+    setPbt2Hz(s.pbt2Hz);
+    setFilterWidth(s.filterWidth);
+    setMemory(s.memory);
+    setMemIndex(s.memIndex);
+    setVfoMMode(s.vfoMMode);
+    setMox(s.mox);
+    setVox(s.vox);
+    setVoxDelayKnob(s.voxDelayKnob);
+    setVoxGainKnob(s.voxGainKnob);
+    setRx(s.rx);
+    setCompEnabled(s.compEnabled);
+    setProcLevel(s.procLevel);
+    setMoniEnabled(s.moniEnabled);
+    setMoniLevel(s.moniLevel);
+    setMicGain(s.micGain);
+    setTxPower(s.txPower);
+    setKeySpeed(s.keySpeed);
+    setDim(s.dim);
+    setMScope(s.mScope);
+    setAntennaState(s.antenna);
+    setHeadingState(s.heading);
+    setSfxEnabledState(s.sfxEnabled);
+    setSfxEnabled(s.sfxEnabled);
+    setSelectedMicId(s.selectedMicId);
+    setSelectedSpeakerId(s.selectedSpeakerId);
+    setBandMemory(s.bandMemory);
+  }, []);
+
   const handleJoin = useCallback(async (callsignInput: string, gridInput: string) => {
+    setSettingsHydrated(false);
     setCallsign(callsignInput);
     setOwnGrid(gridInput);
     try {
@@ -313,6 +438,10 @@ export function App() {
                 logEvent(`Microphone error: ${String(err)}`);
               });
             break;
+          case "settings":
+            if (message.settings) applySettings(message.settings);
+            setSettingsHydrated(true);
+            break;
           case "roster":
             setRoster(message.stations);
             break;
@@ -340,7 +469,7 @@ export function App() {
     socketRef.current = socket;
     socket.connect();
     setJoined(true);
-  }, [logEvent, refreshDevices]);
+  }, [logEvent, refreshDevices, applySettings]);
 
   // Push VFO/mode/RIT/XIT/split/filter changes to the server whenever they change.
   useEffect(() => {
@@ -359,6 +488,20 @@ export function App() {
     if (!joined) return;
     socketRef.current?.send({ type: "antenna", antenna, headingDeg: heading });
   }, [joined, antenna, heading]);
+
+  // Persist the full setup to the server (keyed by callsign), debounced so a
+  // knob being dragged doesn't fire a save on every intermediate tick.
+  // Gated on settingsHydrated so this can't fire on default state during the
+  // brief window before the server's own reply (which may carry a real saved
+  // profile) has arrived and been applied.
+  useEffect(() => {
+    if (!joined || !settingsHydrated) return;
+    const settings = buildSettings();
+    const id = window.setTimeout(() => {
+      socketRef.current?.send({ type: "save_settings", settings });
+    }, 1200);
+    return () => window.clearTimeout(id);
+  }, [joined, settingsHydrated, buildSettings]);
 
   // Twin PBT's derived shift/narrowing values feed straight into the
   // existing ifShiftHz/pbtQ receive params -- the DSP itself doesn't need
@@ -881,6 +1024,7 @@ export function App() {
     setOwnId(null);
     setRoster([]);
     setEvents([]);
+    setSettingsHydrated(false);
   }, []);
 
   if (!joined) {
