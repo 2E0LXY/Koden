@@ -188,6 +188,11 @@ class AiQsoSession {
     // rather than wedge it open forever waiting for a reply that's never coming.
     this.capturedId = null;
     this.awaitingReply = false;
+    // A reply that was still streaming down when the connection dropped
+    // leaves an orphaned, permanently-undeliverable remainder otherwise (see
+    // the comment on nextFrame() -- the frequency would stay wedged "busy"
+    // forever over a few leftover samples nobody will ever complete).
+    this.downlinkQueue.length = 0;
   }
 
   private handleMessage(data: unknown): void {
@@ -221,7 +226,22 @@ class AiQsoSession {
       }
     }
 
-    if (msg.serverContent?.turnComplete) this.awaitingReply = false;
+    if (msg.serverContent?.turnComplete) {
+      this.awaitingReply = false;
+      // nextFrame() only drains the queue in exact FRAME_SAMPLES chunks, but
+      // Gemini's audio chunks are never aligned to that boundary, so the
+      // trailing remainder of a completed reply is almost always a few
+      // samples short of a full frame. With no more audio coming for this
+      // turn, that remainder would otherwise sit there forever -- and
+      // "the frequency is occupied until the queue is empty" (see tick())
+      // would stay permanently true, silently blocking every future caller
+      // with no error and nothing logged. Pad it out to one final frame so
+      // it actually gets delivered and drained instead of wedging open.
+      const remainder = this.downlinkQueue.length % FRAME_SAMPLES;
+      if (remainder > 0) {
+        for (let i = 0; i < FRAME_SAMPLES - remainder; i++) this.downlinkQueue.push(0);
+      }
+    }
 
     // A barge-in on Gemini's side (shouldn't normally happen given manual
     // turn control, but handled defensively): drop whatever's still queued
