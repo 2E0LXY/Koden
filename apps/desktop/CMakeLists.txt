@@ -79,3 +79,62 @@ target_link_libraries(KodenDesktop PRIVATE
   juce::juce_recommended_config_flags
   juce::juce_recommended_lto_flags
 )
+
+# --- Packaging: a real "download and run" artifact per platform ----------
+# Debian: a proper .deb (dpkg-shlibdeps auto-detects the ALSA/X11/OpenSSL/
+# etc. runtime deps this binary actually dynamically links against, so the
+# package declares correct Depends: instead of a hand-maintained guess).
+# Windows: a zip of the exe -- built with the static MSVC runtime (see
+# below) so it doesn't also require installing the VC++ redistributable.
+if (WIN32)
+  set_property(TARGET KodenDesktop PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
+# JUCE names the built binary after PRODUCT_NAME ("Koden Desktop", with a
+# space) -- fine for a window title, awkward for an installed /usr/bin
+# entry and the .desktop launcher's Exec= line, so give the file itself a
+# plain lowercase-hyphen name without touching the displayed title.
+set_target_properties(KodenDesktop PROPERTIES OUTPUT_NAME "koden-desktop")
+
+# JUCE's own CMakeLists registers install() rules for juceaide and its full
+# module source tree (it supports being installed as an SDK) -- those get
+# swept into our install tree too via FetchContent, so everything we
+# actually want to ship is tagged with its own component and CPack is told
+# to package only that component, not "everything install() touched".
+install(TARGETS KodenDesktop RUNTIME DESTINATION bin COMPONENT koden_desktop_runtime)
+
+if (UNIX AND NOT APPLE)
+  install(FILES packaging/koden-desktop.desktop DESTINATION share/applications COMPONENT koden_desktop_runtime)
+endif()
+
+set(CPACK_COMPONENTS_ALL koden_desktop_runtime)
+set(CPACK_DEB_COMPONENT_INSTALL ON)
+set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
+
+set(CPACK_PACKAGE_NAME "koden-desktop")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_VENDOR "Koden")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Native desktop client for the Koden virtual HF radio simulator")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://kodenradio.uk/")
+
+if (UNIX AND NOT APPLE)
+  set(CPACK_GENERATOR "DEB")
+  set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+  set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Koden Project <noreply@kodenradio.uk>")
+  set(CPACK_DEBIAN_PACKAGE_SECTION "hamradio")
+  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+  # JUCE's Linux backend dlopen()s X11 (and, once phase 2 adds real audio
+  # device access, ALSA) rather than linking them directly, so dpkg-shlibdeps
+  # can't see this dependency on its own -- listed explicitly and merged
+  # with the auto-detected shlib deps above.
+  set(CPACK_DEBIAN_PACKAGE_DEPENDS "libx11-6, libxext6, libxrandr2, libxinerama1, libxcursor1, libxrender1")
+  set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
+  # Component-specific override so the single package we ship is still
+  # named plain "koden-desktop", not "koden-desktop-koden-desktop-runtime".
+  set(CPACK_DEBIAN_KODEN_DESKTOP_RUNTIME_PACKAGE_NAME "koden-desktop")
+elseif (WIN32)
+  set(CPACK_GENERATOR "ZIP")
+  set(CPACK_ARCHIVE_KODEN_DESKTOP_RUNTIME_FILE_NAME "koden-desktop-${PROJECT_VERSION}-win64")
+endif()
+
+include(CPack)
