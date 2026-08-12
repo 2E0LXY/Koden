@@ -19,6 +19,8 @@ import { JoinForm } from "./ui/JoinForm.js";
 import { StationsLogWindow } from "./ui/StationsLogWindow.js";
 import { WorldMap } from "./ui/WorldMap.js";
 import { RadioPanel } from "./ui/RadioPanel.js";
+import { HelpButton } from "./ui/HelpButton.js";
+import { HelpModal } from "./ui/HelpModal.js";
 
 /**
  * A real S-meter reads the receiver's actual front-end sensitivity, not just
@@ -161,6 +163,7 @@ export function App() {
   const [dim, setDim] = useState(false);
   const [mScope, setMScope] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [tunerActive, setTunerActive] = useState(false);
   const [swr, setSwr] = useState(2.8);
 
@@ -1028,13 +1031,21 @@ export function App() {
   }, []);
 
   if (!joined) {
-    return <JoinForm onJoin={handleJoin} defaultCallsign={savedCallsign} defaultGrid={savedGrid} />;
+    return (
+      <>
+        <JoinForm onJoin={handleJoin} defaultCallsign={savedCallsign} defaultGrid={savedGrid} />
+        <HelpButton onClick={() => setHelpOpen(true)} />
+        {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+      </>
+    );
   }
 
   return (
     <>
       <StationsLogWindow roster={roster} ownId={ownId} audibleStationIds={meter.audibleStationIds} />
       <WorldMap roster={roster} ownId={ownId} ownGrid={ownGrid} antenna={antenna} headingDeg={heading} />
+      <HelpButton onClick={() => setHelpOpen(true)} />
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
       <RadioPanel
         callsign={callsign}
         connectionStatus={connectionStatus}
