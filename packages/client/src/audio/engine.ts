@@ -488,7 +488,7 @@ export class AudioEngine {
       // FAST's snappy recovery and SLOW's smoother one.
       const agcConstants = { FAST: { knee: 10, attack: 0.008, release: 0.25 },
         MID: { knee: 13, attack: 0.015, release: 0.6 },
-        SLOW: { knee: 16, attack: 0.03, release: 1.4 } }[p.agcMode];
+        SLOW: { knee: 16, attack: 0.03, release: 1 } }[p.agcMode];
       this.agcCompressor.knee.value = agcConstants.knee;
       this.agcCompressor.attack.value = agcConstants.attack;
       this.agcCompressor.release.value = agcConstants.release;
