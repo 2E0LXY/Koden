@@ -11,6 +11,23 @@ const ES_MAX_RANGE_KM = 2200;
 const ES_CHANCE_PER_SECOND = 0.0006;
 const ES_MIN_DURATION_MS = 4 * 60 * 1000;
 const ES_MAX_DURATION_MS = 35 * 60 * 1000;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Real sporadic-E is strongly seasonal: it peaks hard in Northern-hemisphere
+ * summer (roughly late May-August, when most of the world's Es-chasing ham
+ * population sees it) and is markedly rarer the rest of the year. A single
+ * global calendar curve is a simplification (the Southern hemisphere's own
+ * summer peak six months later is real too), but a single dominant peak
+ * beats no seasonality at all. Returns a multiplier on the base per-second
+ * chance: ~0.35x in deep winter, 1x at the equinoxes, ~1.9x at the summer
+ * peak.
+ */
+function seasonalEsFactor(nowMs: number): number {
+  const dayOfYear = Math.floor(nowMs / MS_PER_DAY) % 365;
+  const phase = ((dayOfYear - 172) / 365) * 2 * Math.PI; // peak ~June 21
+  return 1.125 + 0.775 * Math.cos(phase);
+}
 
 export interface SporadicEEvent {
   bandId: string;
@@ -37,8 +54,9 @@ export class SporadicEEngine {
   }
 
   /** Advance every Es-prone band's state by one tick; returns any open/close transitions to announce. */
-  tick(bands: Band[], dtMs: number): SporadicEEvent[] {
+  tick(bands: Band[], dtMs: number, nowMs: number): SporadicEEvent[] {
     const events: SporadicEEvent[] = [];
+    const seasonalFactor = seasonalEsFactor(nowMs);
     for (const band of bands) {
       if (!band.sporadicEProne) continue;
       const state = this.stateFor(band.id);
@@ -49,7 +67,7 @@ export class SporadicEEngine {
           state.boostDb = 0;
           events.push({ bandId: band.id, kind: "band_closing" });
         }
-      } else if (Math.random() < ES_CHANCE_PER_SECOND * (dtMs / 1000)) {
+      } else if (Math.random() < ES_CHANCE_PER_SECOND * seasonalFactor * (dtMs / 1000)) {
         state.active = true;
         state.remainingMs =
           ES_MIN_DURATION_MS + Math.random() * (ES_MAX_DURATION_MS - ES_MIN_DURATION_MS);

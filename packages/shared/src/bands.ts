@@ -23,6 +23,16 @@ export interface Band {
   skipDistanceKm: number;
   /** Whether this band gets sporadic-E short-skip openings (distinct from meteor scatter): a regional ionised patch that suddenly opens the band for everyone within range, for minutes at a time. */
   sporadicEProne: boolean;
+  /**
+   * Roughly the F10.7cm solar flux (SFU) needed for this band's *regular*
+   * F2-layer skywave DX to work at all -- real 10m/6m go essentially dead
+   * for ordinary skip near solar minimum no matter the time of day, only
+   * popping open via sporadic-E or meteor scatter, because the MUF simply
+   * doesn't reach the band. Undefined on bands whose skip is governed by
+   * D-layer absorption/time-of-day rather than the F2 critical frequency,
+   * which is every band that isn't chasing an unusually high MUF.
+   */
+  minSfiForSkip?: number;
 }
 
 export const BANDS: Band[] = [
@@ -129,6 +139,7 @@ export const BANDS: Band[] = [
     groundwaveRangeKm: 18,
     skipDistanceKm: 1000,
     sporadicEProne: false,
+    minSfiForSkip: 75,
   },
   {
     id: "15m",
@@ -143,6 +154,7 @@ export const BANDS: Band[] = [
     groundwaveRangeKm: 15,
     skipDistanceKm: 1200,
     sporadicEProne: false,
+    minSfiForSkip: 90,
   },
   {
     id: "12m",
@@ -157,6 +169,7 @@ export const BANDS: Band[] = [
     groundwaveRangeKm: 12,
     skipDistanceKm: 1500,
     sporadicEProne: false,
+    minSfiForSkip: 105,
   },
   {
     id: "10m",
@@ -175,6 +188,7 @@ export const BANDS: Band[] = [
     groundwaveRangeKm: 10,
     skipDistanceKm: 1800,
     sporadicEProne: true,
+    minSfiForSkip: 115,
   },
   {
     id: "6m",
@@ -189,6 +203,7 @@ export const BANDS: Band[] = [
     groundwaveRangeKm: 8,
     skipDistanceKm: 1500,
     sporadicEProne: true,
+    minSfiForSkip: 160,
   },
 ];
 
