@@ -295,7 +295,7 @@ export class MixerEngine {
     const all = this.stations.all();
     const transmitters = all.filter((s) => s.transmitting && s.pendingFrame);
 
-    for (const event of this.sporadicE.tick(BANDS, dtMs)) {
+    for (const event of this.sporadicE.tick(BANDS, dtMs, nowMs)) {
       const band = bandById(event.bandId);
       if (!band) continue;
       const message =

@@ -271,15 +271,32 @@ export class PropagationEngine {
     const flux = getNormalizedSolarFlux();
     const band = input.band;
 
+    // On bands whose regular skip depends on reaching an unusually high MUF
+    // (17m upward), the real F10.7cm flux either supports that or it
+    // doesn't -- there's no amount of "well, it's a bit better at night" that
+    // gets 10m open on a dead solar-minimum day. Ramp the skywave path
+    // itself out as flux falls short of the band's threshold (groundwave is
+    // untouched -- local/regional contacts don't care about the MUF), so
+    // these bands genuinely go silent for skip rather than just quieter,
+    // matching how real ops describe them as "closed" outside sporadic-E or
+    // meteor-scatter pings (both separate, additive boosts below that still
+    // get through even while the band is otherwise dead).
+    const sfi = getSolarConditions().sfi;
+    const mufOpenFraction = band.minSfiForSkip
+      ? Math.max(0, Math.min(1, (sfi - (band.minSfiForSkip - 15)) / 30))
+      : 1;
+    const mufShutdownDb = (1 - mufOpenFraction) * 45;
+
     // Baseline path loss is the stronger of groundwave (dominant close in,
     // rolls off steeply past the band's typical groundwave range) or
     // skywave (heavily attenuated inside the band's typical skip distance,
-    // then the usual gentle log falloff beyond it). Between the two lies
-    // the classic "skip zone" dead spot: too far for groundwave, too close
-    // for the first skywave hop to land.
+    // then the usual gentle log falloff beyond it, and further crushed by
+    // mufShutdownDb if the MUF can't support it). Between the two lies the
+    // classic "skip zone" dead spot: too far for groundwave, too close for
+    // the first skywave hop to land.
     const pathLossDb = Math.max(
       groundwaveDb(distanceKm, band.groundwaveRangeKm),
-      skywaveDb(distanceKm, band.skipDistanceKm),
+      skywaveDb(distanceKm, band.skipDistanceKm) - mufShutdownDb,
     );
 
     // Low bands (160/80/40) suffer daytime D-layer absorption but open up
