@@ -21,6 +21,7 @@ import { WorldMap } from "./ui/WorldMap.js";
 import { RadioPanel } from "./ui/RadioPanel.js";
 import { HelpButton } from "./ui/HelpButton.js";
 import { HelpModal } from "./ui/HelpModal.js";
+import { SdrRxButton } from "./ui/SdrRxButton.js";
 
 /**
  * A real S-meter reads the receiver's actual front-end sensitivity, not just
@@ -1046,6 +1047,7 @@ export function App() {
       <WorldMap roster={roster} ownId={ownId} ownGrid={ownGrid} antenna={antenna} headingDeg={heading} />
       <HelpButton onClick={() => setHelpOpen(true)} />
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+      <SdrRxButton freqKHz={listenFreqKHz} mode={activeVfoState.mode} />
       <RadioPanel
         callsign={callsign}
         connectionStatus={connectionStatus}
