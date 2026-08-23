@@ -22,6 +22,7 @@ import { RadioPanel } from "./ui/RadioPanel.js";
 import { HelpButton } from "./ui/HelpButton.js";
 import { HelpModal } from "./ui/HelpModal.js";
 import { SdrRxButton } from "./ui/SdrRxButton.js";
+import { SdrRxAudio } from "./ui/SdrRxAudio.js";
 
 /**
  * A real S-meter reads the receiver's actual front-end sensitivity, not just
@@ -165,6 +166,7 @@ export function App() {
   const [mScope, setMScope] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [sdrLiveEnabled, setSdrLiveEnabled] = useState(false);
   const [tunerActive, setTunerActive] = useState(false);
   const [swr, setSwr] = useState(2.8);
 
@@ -1029,6 +1031,7 @@ export function App() {
     setRoster([]);
     setEvents([]);
     setSettingsHydrated(false);
+    setSdrLiveEnabled(false);
   }, []);
 
   if (!joined) {
@@ -1047,7 +1050,13 @@ export function App() {
       <WorldMap roster={roster} ownId={ownId} ownGrid={ownGrid} antenna={antenna} headingDeg={heading} />
       <HelpButton onClick={() => setHelpOpen(true)} />
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
-      <SdrRxButton freqKHz={listenFreqKHz} mode={activeVfoState.mode} />
+      <SdrRxButton
+        freqKHz={listenFreqKHz}
+        mode={activeVfoState.mode}
+        enabled={sdrLiveEnabled}
+        onToggle={() => setSdrLiveEnabled((s) => !s)}
+      />
+      {sdrLiveEnabled && <SdrRxAudio freqKHz={listenFreqKHz} mode={activeVfoState.mode} />}
       <RadioPanel
         callsign={callsign}
         connectionStatus={connectionStatus}
