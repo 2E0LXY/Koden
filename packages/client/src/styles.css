@@ -1243,6 +1243,51 @@ button {
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5), inset 0 0 0 1px #2a2a2e, 0 0 10px rgba(232, 184, 75, 0.5);
 }
 
+.sdr-rx-fab {
+  position: fixed;
+  right: 68px;
+  bottom: 16px;
+  z-index: 900;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #253a3e, #10191b 70%);
+  border: 1px solid #3a4a4e;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5), inset 0 0 0 1px #223034;
+  color: #5bc8e8;
+  font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+.sdr-rx-fab:hover {
+  color: #8fe0ff;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5), inset 0 0 0 1px #223034, 0 0 10px rgba(91, 200, 232, 0.5);
+}
+.sdr-rx-fab--active {
+  background: radial-gradient(circle at 35% 30%, #1c4a4e, #0c2426 70%);
+  border-color: #5bc8e8;
+  color: #8fe0ff;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5), inset 0 0 0 1px #2a5a5e, 0 0 12px rgba(91, 200, 232, 0.6);
+}
+
+/* Visually hidden rather than display:none -- some browsers suspend audio in a display:none iframe. */
+.sdr-rx-audio-frame {
+  position: fixed;
+  left: -9999px;
+  top: -9999px;
+  width: 1px;
+  height: 1px;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .help-modal__backdrop {
   position: fixed;
   inset: 0;
