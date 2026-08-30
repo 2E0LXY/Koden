@@ -10,6 +10,7 @@ import {
   type ServerMessage,
   type StationInfo,
   bandById,
+  isValidCallsign,
   isValidGrid,
 } from "@koden/shared";
 import { StationManager, type Station } from "./stationManager.js";
@@ -155,7 +156,12 @@ const httpServer = createServer((req, res) => {
   res.end();
 });
 
-const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+// ws defaults to no limit (effectively 100MiB); the largest legitimate
+// message is either a 640-byte binary audio frame or a settings-save JSON
+// blob capped at 64KiB (profileStore.ts's own MAX_JSON_BYTES), so 128KiB
+// leaves generous headroom while closing off using huge frames to exhaust
+// server memory/CPU before any application-level size check runs.
+const wss = new WebSocketServer({ server: httpServer, path: "/ws", maxPayload: 128 * 1024 });
 
 wss.on("connection", (ws) => {
   const id = randomUUID();
@@ -182,6 +188,11 @@ wss.on("connection", (ws) => {
     }
 
     if (parsed.type === "hello") {
+      if (!isValidCallsign(parsed.callsign)) {
+        send(ws, { type: "error", message: "Callsign contains invalid characters" });
+        ws.close(1008, "Invalid callsign");
+        return;
+      }
       if (!isValidGrid(parsed.grid)) {
         send(ws, { type: "error", message: "Invalid grid locator" });
         ws.close(1008, "Invalid grid locator");
@@ -243,6 +254,10 @@ wss.on("connection", (ws) => {
     } else if (parsed.type === "swr") {
       station.swr = parsed.swr;
     } else if (parsed.type === "profile") {
+      if (!isValidCallsign(parsed.callsign)) {
+        send(ws, { type: "error", message: "Callsign contains invalid characters" });
+        return;
+      }
       if (!isValidGrid(parsed.grid)) {
         send(ws, { type: "error", message: "Invalid grid locator" });
         return;

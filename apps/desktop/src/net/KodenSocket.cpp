@@ -50,6 +50,12 @@ KodenSocket::KodenSocket(juce::String url)
 KodenSocket::~KodenSocket()
 {
     close();
+    // Pairs with initNetSystem() in the constructor -- no-op on Linux/macOS,
+    // but on Windows leaves a WSAStartup call with no matching WSACleanup
+    // otherwise (harmless for one long-lived instance since process exit
+    // cleans it up regardless, but every additional KodenSocket built while
+    // an earlier one still exists would otherwise leak one more).
+    ix::uninitNetSystem();
 }
 
 void KodenSocket::connect()

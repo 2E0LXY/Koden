@@ -282,7 +282,7 @@ export class MixerEngine {
       // reset the pink noise filter to silence (an audible warm-up
       // transient) and re-roll every random timer, making the same band
       // sound inconsistent every time the mode changes.
-      if (!existing.generator.matches(rx.mode)) existing.generator.retune(rx.mode);
+      if (!existing.generator.matches(rx.mode, rx.filterWidth)) existing.generator.retune(rx.mode, rx.filterWidth);
       return existing.generator;
     }
     const generator = new BandNoiseGenerator(band, this.sampleRate, rx.mode, rx.filterWidth);

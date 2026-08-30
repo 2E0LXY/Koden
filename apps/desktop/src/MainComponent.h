@@ -40,6 +40,11 @@ private:
     std::mutex snapshotMutex;
     Snapshot snapshot;
 
+    // Generated once per process (see makeInstanceCallsign in the .cpp) and
+    // reused across reconnects, so this instance's identity stays stable
+    // for as long as it's running rather than changing on every reconnect.
+    juce::String instanceCallsign;
+
     std::unique_ptr<koden::KodenSocket> socket;
 
     juce::Label titleLabel;

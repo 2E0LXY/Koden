@@ -4,11 +4,23 @@ namespace {
 // TODO(phase 2): make this configurable from a setup screen, matching
 // JoinForm.tsx's callsign/grid entry -- hardcoded for the phase-1 proof.
 const juce::String kServerUrl = "wss://kodenradio.uk/ws";
-const juce::String kCallsign = "M0JUCE";
+const juce::String kCallsignBase = "M0JUCE";
 const juce::String kGrid = "IO91WM";
+
+// Two copies of this hardcoded identity would otherwise present as the
+// literal same station to the server (and to each other) the moment both
+// are connected -- e.g. running a second instance to test something while
+// the first is still open. A random per-process suffix isn't a real
+// identity system, just enough to stop that collision until phase 2's
+// setup screen replaces this with a real one.
+juce::String makeInstanceCallsign()
+{
+    return kCallsignBase + juce::String(juce::Random::getSystemRandom().nextInt(100));
+}
 } // namespace
 
 MainComponent::MainComponent()
+    : instanceCallsign(makeInstanceCallsign())
 {
     titleLabel.setText("KODEN DESKTOP (phase 1: network status only)", juce::dontSendNotification);
     titleLabel.setFont(juce::Font(16.0f, juce::Font::bold));
@@ -28,7 +40,20 @@ MainComponent::MainComponent()
         std::lock_guard<std::mutex> lock(snapshotMutex);
         snapshot.connected = connected;
         if (connected)
-            socket->sendHello(kCallsign, kGrid);
+        {
+            socket->sendHello(instanceCallsign, kGrid);
+        }
+        else
+        {
+            // Otherwise the last-known roster (including a station that may
+            // still be shown mid-transmit) and settings state keep rendering
+            // as current, live data for however long the reconnect takes --
+            // stale ground truth presented with no visual distinction from
+            // the real thing.
+            snapshot.roster.clear();
+            snapshot.settingsKnown = false;
+            snapshot.hasSettings = false;
+        }
     });
 
     socket->onServerMessage([this](const koden::ServerMessage& msg) {
@@ -75,7 +100,7 @@ void MainComponent::timerCallback()
         copy = snapshot;
     }
 
-    juce::String status = copy.connected ? "Connected as " + kCallsign : "Disconnected";
+    juce::String status = copy.connected ? "Connected as " + instanceCallsign : "Disconnected";
     if (copy.settingsKnown)
         status << (copy.hasSettings ? "  |  saved profile loaded" : "  |  no saved profile");
     statusLabel.setText(status, juce::dontSendNotification);

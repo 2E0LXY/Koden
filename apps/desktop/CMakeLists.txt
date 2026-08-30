@@ -17,7 +17,10 @@ FetchContent_Declare(
 
 set(USE_TLS ON CACHE BOOL "" FORCE)
 set(BUILD_DEMO OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+# IXWebSocket's own test suite is gated by USE_TEST, not BUILD_TESTS -- it
+# defaults off already, but set the real variable so this stays true if that
+# default ever changes upstream.
+set(USE_TEST OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
   IXWebSocket
   GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git

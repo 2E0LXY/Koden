@@ -43,6 +43,17 @@ export function isM0aiEnabled(): boolean {
 /** With nobody calling and nothing left to say, tear down the live API connection after this long rather than holding a paid session open forever. Reconnects fresh (a new "operating session") the next time someone calls. */
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
+/**
+ * Safety net for awaitingReply: normally cleared by serverContent.turnComplete
+ * (see handleMessage), but a hung-open connection where Gemini sends
+ * something else entirely -- a safety-block frame, a malformed message, a
+ * shape this client doesn't recognize -- would otherwise leave it stuck true
+ * forever, wedging the whole frequency shut for every future caller with
+ * nothing logged. A live voice reply should always start and finish well
+ * within this window under normal conditions.
+ */
+const REPLY_TIMEOUT_MS = 20 * 1000;
+
 const SYSTEM_INSTRUCTION = `You are the operator behind M0AI, an amateur radio station in Leeds, England (grid locator ${M0AI_GRID}), taking live HF voice contacts (QSOs) over simulated 20m SSB. Your first name is Alex. Your station is an Icom IC-7610 running 400W to a 5-element Yagi beam at 18 metres. You are a real, automatic AI-operated station -- if someone directly asks whether you're an AI, say yes, cheerfully; otherwise just be a normal, friendly ham having a contact, without bringing it up unprompted.
 
 Voice: you're a man with a broad, natural Yorkshire accent -- proper Leeds, not a caricature of one -- speaking in a deep, mellow, warm radio-announcer register, like a seasoned local broadcaster. Unhurried and easy to listen to, never shouty or clipped.
@@ -107,6 +118,8 @@ class AiQsoSession {
   private framesSentThisCapture = 0;
   /** Set once that station's turn is closed off (PTT released/disconnected); cleared once Gemini's reply is fully generated. While true, the frequency stays occupied even though capturedId is already null. */
   private awaitingReply = false;
+  /** When awaitingReply last became true -- see REPLY_TIMEOUT_MS. */
+  private awaitingReplySinceMs = 0;
   private lastActivityMs = 0;
 
   /** Flat queue of not-yet-delivered downlink samples at the sim's own 16kHz, chunked into FRAME_SAMPLES-sized frames on demand. */
@@ -310,12 +323,24 @@ class AiQsoSession {
         this.send({ realtimeInput: { activityEnd: {} } });
         this.capturedId = null;
         this.awaitingReply = true;
+        this.awaitingReplySinceMs = nowMs;
       }
       return;
     }
 
-    // The frequency is occupied until the previous reply is fully delivered.
-    if (this.awaitingReply || this.downlinkQueue.length > 0) return;
+    // The frequency is occupied until the previous reply is fully delivered
+    // -- unless Gemini has gone quiet on an in-band message that isn't
+    // turnComplete (or any other recognized shape) for too long, in which
+    // case we stop waiting rather than wedge the frequency shut forever.
+    if (this.awaitingReply) {
+      if (nowMs - this.awaitingReplySinceMs < REPLY_TIMEOUT_MS) return;
+      console.warn(
+        `[m0ai] No turnComplete from Gemini within ${REPLY_TIMEOUT_MS}ms of the call ending -- freeing the frequency defensively`,
+      );
+      this.awaitingReply = false;
+      this.downlinkQueue.length = 0;
+    }
+    if (this.downlinkQueue.length > 0) return;
 
     const next = keyed[0];
     if (!next) return;
@@ -336,6 +361,7 @@ class AiQsoSession {
     this.send({ realtimeInput: { activityEnd: {} } });
     this.capturedId = null;
     this.awaitingReply = true;
+    this.awaitingReplySinceMs = Date.now();
   }
 
   /** This tick's downlink frame (band-limited to M0AI's own mode), or null if not enough reply audio has arrived yet. Shared verbatim by every listener -- mixer.ts applies its own per-listener multipath, the same way it does for the parrot. */

@@ -1,5 +1,5 @@
 import type { Band, FilterWidth, Mode } from "@koden/shared";
-import { passbandKHz } from "./propagation.js";
+import { FILTER_WIDTH_MULTIPLIER, passbandKHz } from "./propagation.js";
 
 /** dBFS-ish gain helper: convert a dB value to a linear amplitude multiplier. */
 export function dbToLinear(db: number): number {
@@ -542,7 +542,7 @@ export class BandNoiseGenerator {
     band: Band,
     private sampleRate: number,
     private mode: Mode,
-    _filterWidth: FilterWidth,
+    private filterWidth: FilterWidth,
   ) {
     this.bandId = band.id;
 
@@ -614,7 +614,7 @@ export class BandNoiseGenerator {
       new Birdie(sampleRate * 0.27, sampleRate, 0.01),
     ];
 
-    this.configureForMode(mode);
+    this.configureForMode(mode, filterWidth);
   }
 
   /**
@@ -644,16 +644,27 @@ export class BandNoiseGenerator {
    * than SSB's textured pink noise), so it gets a presence boost instead
    * of a lowpass.
    */
-  private configureForMode(mode: Mode): void {
+  private configureForMode(mode: Mode, filterWidth: FilterWidth): void {
     this.mode = mode;
+    this.filterWidth = filterWidth;
     this.shaper = null;
     this.shaperHighpass = null;
     this.brightener = null;
     this.shaperMakeupGain = 1;
     if (!(mode === "AM" && this.heterodyne)) this.heterodyne = null;
 
+    // A real narrow CW/RTTY filter doesn't just get quieter, it audibly
+    // narrows -- the hiss thins into a more resonant, tonal whistle around
+    // the sidetone/mark-space frequency. A real wide SSB/AM filter opens up
+    // the same way. Reuses the same narrow/normal/wide multiplier the
+    // passband-width math already applies (0.5/1/1.6), inverted for Q
+    // (narrower passband = higher, more resonant Q) or applied directly to
+    // the highpass/lowpass corner frequencies (narrower passband = tighter
+    // window).
+    const widthMul = FILTER_WIDTH_MULTIPLIER[filterWidth];
+
     if (mode === "CW") {
-      this.shaper = Biquad.bandpass(this.sampleRate, 700, 0.9);
+      this.shaper = Biquad.bandpass(this.sampleRate, 700, 0.9 / widthMul);
       // Narrow bandpass throws away most of the energy, so some makeup gain
       // is a legitimate correction to keep it audible rather than a near-
       // silent sliver -- but kept modest (not fully restored to broadband
@@ -666,14 +677,14 @@ export class BandNoiseGenerator {
       // 170Hz shift), not CW's ~700Hz sidetone -- shaping the noise around
       // that higher window instead of reusing CW's filter keeps RTTY's
       // texture from just sounding like narrowband CW hiss.
-      this.shaper = Biquad.bandpass(this.sampleRate, 2210, 0.7);
+      this.shaper = Biquad.bandpass(this.sampleRate, 2210, 0.7 / widthMul);
       this.shaperMakeupGain = 1.7;
     } else if (mode === "USB" || mode === "LSB" || mode === "DATA") {
-      this.shaperHighpass = Biquad.highpass(this.sampleRate, 300, 0.7);
-      this.shaper = Biquad.lowpass(this.sampleRate, 2700, 0.7);
+      this.shaperHighpass = Biquad.highpass(this.sampleRate, 300 / widthMul, 0.7);
+      this.shaper = Biquad.lowpass(this.sampleRate, 2700 * widthMul, 0.7);
       this.shaperMakeupGain = 1.6;
     } else if (mode === "AM") {
-      this.shaper = Biquad.lowpass(this.sampleRate, 3200, 0.7);
+      this.shaper = Biquad.lowpass(this.sampleRate, 3200 * widthMul, 0.7);
       this.shaperMakeupGain = 1.3;
       if (!this.heterodyne) {
         const startFrac = hashFrac(this.bandId);
@@ -684,15 +695,15 @@ export class BandNoiseGenerator {
     }
   }
 
-  /** Switch this generator to a new mode in place -- see configureForMode for why this matters. */
-  retune(mode: Mode): void {
-    if (this.mode === mode) return;
-    this.configureForMode(mode);
+  /** Switch this generator to a new mode/filter width in place -- see configureForMode for why this matters. */
+  retune(mode: Mode, filterWidth: FilterWidth): void {
+    if (this.mode === mode && this.filterWidth === filterWidth) return;
+    this.configureForMode(mode, filterWidth);
   }
 
   /** True if this generator can keep serving the given mode/filter without being rebuilt. */
-  matches(mode: Mode): boolean {
-    return this.mode === mode;
+  matches(mode: Mode, filterWidth: FilterWidth): boolean {
+    return this.mode === mode && this.filterWidth === filterWidth;
   }
 
   /**

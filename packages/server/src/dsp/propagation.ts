@@ -16,7 +16,7 @@ import {
 import { getNormalizedSolarFlux, getSolarConditions } from "./solar.js";
 import type { SporadicEEngine } from "./sporadicE.js";
 
-const FILTER_WIDTH_MULTIPLIER: Record<FilterWidth, number> = {
+export const FILTER_WIDTH_MULTIPLIER: Record<FilterWidth, number> = {
   narrow: 0.5,
   normal: 1,
   wide: 1.6,
@@ -282,9 +282,10 @@ export class PropagationEngine {
     // meteor-scatter pings (both separate, additive boosts below that still
     // get through even while the band is otherwise dead).
     const sfi = getSolarConditions().sfi;
-    const mufOpenFraction = band.minSfiForSkip
-      ? Math.max(0, Math.min(1, (sfi - (band.minSfiForSkip - 15)) / 30))
-      : 1;
+    const mufOpenFraction =
+      band.minSfiForSkip !== undefined
+        ? Math.max(0, Math.min(1, (sfi - (band.minSfiForSkip - 15)) / 30))
+        : 1;
     const mufShutdownDb = (1 - mufOpenFraction) * 45;
 
     // Baseline path loss is the stronger of groundwave (dominant close in,
@@ -311,6 +312,22 @@ export class PropagationEngine {
     const dayAbsorptionPenalty = band.daytimeAbsorption * avgDaylight * 10;
     const highBandDaylightNeed = band.meteorScatterProne ? 1 : 1 - band.daytimeAbsorption;
     const skipBonus = highBandDaylightNeed * avgDaylight * (4 + (flux - 0.35) * 10);
+
+    // Greyline: real low-band DX gets a distinct, transient boost when
+    // either end sits right on its own day/night terminator -- D-layer
+    // absorption is dropping fast on the sunset side while the F-layer is
+    // still well-ionized from the day just ending, and a path running along
+    // the terminator itself favours that alignment further. daylightFactor
+    // already models a smooth ~3-hour dawn/dusk transition through exactly
+    // 0.5 at the terminator, so "closeness to 0.5" is a direct, cheap proxy
+    // for "near the grey line" without duplicating that transition math.
+    // Scaled by daytimeAbsorption so it's a real bonus on 160/80/40m and
+    // negligible on the high bands, matching why greyline is a low-band
+    // phenomenon in the first place.
+    const txTerminatorCloseness = 1 - Math.abs(txDaylight - 0.5) * 2;
+    const rxTerminatorCloseness = 1 - Math.abs(rxDaylight - 0.5) * 2;
+    const greylineBonus =
+      band.daytimeAbsorption * Math.max(txTerminatorCloseness, rxTerminatorCloseness) * 6;
 
     let fade = this.fades.get(key);
     if (!fade) {
@@ -383,6 +400,7 @@ export class PropagationEngine {
       dayAbsorptionPenalty +
       nightBonus +
       skipBonus +
+      greylineBonus +
       fadeDb +
       meteorBoostDb +
       sporadicEBoostDb +

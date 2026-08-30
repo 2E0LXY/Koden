@@ -11,7 +11,6 @@ const ES_MAX_RANGE_KM = 2200;
 const ES_CHANCE_PER_SECOND = 0.0006;
 const ES_MIN_DURATION_MS = 4 * 60 * 1000;
 const ES_MAX_DURATION_MS = 35 * 60 * 1000;
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
  * Real sporadic-E is strongly seasonal: it peaks hard in Northern-hemisphere
@@ -24,8 +23,11 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  * peak.
  */
 function seasonalEsFactor(nowMs: number): number {
-  const dayOfYear = Math.floor(nowMs / MS_PER_DAY) % 365;
-  const phase = ((dayOfYear - 172) / 365) * 2 * Math.PI; // peak ~June 21
+  const date = new Date(nowMs);
+  const startOfYear = Date.UTC(date.getUTCFullYear(), 0, 1);
+  const daysThisYear = Math.round((Date.UTC(date.getUTCFullYear() + 1, 0, 1) - startOfYear) / 86_400_000);
+  const dayOfYear = Math.floor((nowMs - startOfYear) / 86_400_000);
+  const phase = (dayOfYear / daysThisYear) * 2 * Math.PI - (172 / 365) * 2 * Math.PI; // peak ~June 21
   return 1.125 + 0.775 * Math.cos(phase);
 }
 
