@@ -16,6 +16,16 @@ FetchContent_Declare(
 )
 
 set(USE_TLS ON CACHE BOOL "" FORCE)
+# IXWebSocket has no Windows-native TLS backend -- left to its own defaults
+# it picks MbedTLS on Windows, which needs `find_package(MbedTLS)` to
+# succeed against a system install that plain windows-latest doesn't have
+# (Configure fails with "Could NOT find MbedTLS"). OpenSSL is the one TLS
+# backend GitHub's Windows runner images pre-install specifically for
+# CMake's find_package(OpenSSL) to pick up, so request it explicitly here
+# rather than letting IXWebSocket fall through to its Windows default.
+if (WIN32)
+  set(USE_OPEN_SSL ON CACHE BOOL "" FORCE)
+endif()
 set(BUILD_DEMO OFF CACHE BOOL "" FORCE)
 # IXWebSocket's own test suite is gated by USE_TEST, not BUILD_TESTS -- it
 # defaults off already, but set the real variable so this stays true if that
