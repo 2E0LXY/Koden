@@ -4,6 +4,20 @@ project(KodenDesktop VERSION 0.1.0 LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Static MSVC runtime for every target in this build, not just the final
+# executable -- must be set before any target exists (including JUCE's and
+# IXWebSocket's own, created later via FetchContent) for CMake's CMP0091
+# NEW behavior (default here since cmake_minimum_required is well past
+# 3.15) to apply it uniformly. Setting this only on the KodenDesktop target
+# itself, further down, left every fetched dependency on CMake's default
+# dynamic runtime (/MD) instead -- a guaranteed LNK2038 runtime-library
+# mismatch the first time a static-runtime executable links against a
+# dynamic-runtime .lib, not something introduced by any particular TLS
+# backend choice.
+if (WIN32)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 include(FetchContent)
 
 # Pinned to known-good release tags rather than a moving branch so the build
@@ -16,8 +30,29 @@ FetchContent_Declare(
 )
 
 set(USE_TLS ON CACHE BOOL "" FORCE)
+# IXWebSocket has no Windows-native TLS backend -- left to its own defaults
+# it picks MbedTLS on Windows, which needs `find_package(MbedTLS)` to
+# succeed against a system install that plain windows-latest doesn't have
+# (Configure fails with "Could NOT find MbedTLS"). OpenSSL is the one TLS
+# backend GitHub's Windows runner images pre-install specifically for
+# CMake's find_package(OpenSSL) to pick up, so request it explicitly here
+# rather than letting IXWebSocket fall through to its Windows default.
+if (WIN32)
+  set(USE_OPEN_SSL ON CACHE BOOL "" FORCE)
+  # IXWebSocket's USE_ZLIB defaults on regardless of platform (for the
+  # optional permessage-deflate compression extension) and unconditionally
+  # requires find_package(ZLIB) when enabled. zlib comes for free as part of
+  # the Linux build's system libraries, but plain windows-latest has no
+  # zlib to find, and installing one is unwarranted complexity just to
+  # negotiate an optional extension -- the client and server still talk
+  # fine uncompressed.
+  set(USE_ZLIB OFF CACHE BOOL "" FORCE)
+endif()
 set(BUILD_DEMO OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+# IXWebSocket's own test suite is gated by USE_TEST, not BUILD_TESTS -- it
+# defaults off already, but set the real variable so this stays true if that
+# default ever changes upstream.
+set(USE_TEST OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
   IXWebSocket
   GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
@@ -84,11 +119,9 @@ target_link_libraries(KodenDesktop PRIVATE
 # Debian: a proper .deb (dpkg-shlibdeps auto-detects the ALSA/X11/OpenSSL/
 # etc. runtime deps this binary actually dynamically links against, so the
 # package declares correct Depends: instead of a hand-maintained guess).
-# Windows: a zip of the exe -- built with the static MSVC runtime (see
-# below) so it doesn't also require installing the VC++ redistributable.
-if (WIN32)
-  set_property(TARGET KodenDesktop PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif()
+# Windows: a zip of the exe -- built with the static MSVC runtime (set
+# globally near the top of this file) so it doesn't also require installing
+# the VC++ redistributable.
 
 # JUCE names the built binary after PRODUCT_NAME ("Koden Desktop", with a
 # space) -- fine for a window title, awkward for an installed /usr/bin

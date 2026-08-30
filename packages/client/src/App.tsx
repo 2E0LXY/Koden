@@ -23,6 +23,7 @@ import { HelpButton } from "./ui/HelpButton.js";
 import { HelpModal } from "./ui/HelpModal.js";
 import { SdrRxButton } from "./ui/SdrRxButton.js";
 import { SdrRxAudio } from "./ui/SdrRxAudio.js";
+import { canEmbedSdrAudio } from "./ui/sdrLink.js";
 
 /**
  * A real S-meter reads the receiver's actual front-end sensitivity, not just
@@ -1056,7 +1057,9 @@ export function App() {
         enabled={sdrLiveEnabled}
         onToggle={() => setSdrLiveEnabled((s) => !s)}
       />
-      {sdrLiveEnabled && <SdrRxAudio freqKHz={listenFreqKHz} mode={activeVfoState.mode} />}
+      {sdrLiveEnabled && canEmbedSdrAudio() && (
+        <SdrRxAudio freqKHz={listenFreqKHz} mode={activeVfoState.mode} />
+      )}
       <RadioPanel
         callsign={callsign}
         connectionStatus={connectionStatus}
