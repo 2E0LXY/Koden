@@ -25,6 +25,14 @@ set(USE_TLS ON CACHE BOOL "" FORCE)
 # rather than letting IXWebSocket fall through to its Windows default.
 if (WIN32)
   set(USE_OPEN_SSL ON CACHE BOOL "" FORCE)
+  # IXWebSocket's USE_ZLIB defaults on regardless of platform (for the
+  # optional permessage-deflate compression extension) and unconditionally
+  # requires find_package(ZLIB) when enabled. zlib comes for free as part of
+  # the Linux build's system libraries, but plain windows-latest has no
+  # zlib to find, and installing one is unwarranted complexity just to
+  # negotiate an optional extension -- the client and server still talk
+  # fine uncompressed.
+  set(USE_ZLIB OFF CACHE BOOL "" FORCE)
 endif()
 set(BUILD_DEMO OFF CACHE BOOL "" FORCE)
 # IXWebSocket's own test suite is gated by USE_TEST, not BUILD_TESTS -- it
